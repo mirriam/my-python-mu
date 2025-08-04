@@ -71,12 +71,12 @@ similarity_model = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
 # Constants
 MAX_TOTAL_TOKENS = 3000
 MAX_RETURN_SEQUENCES = 4
-WP_URL = "https://kenya.mimusjobs.com/wp-json/wp/v2/job-listings"
-WP_COMPANY_URL = "https://kenya.mimusjobs.com/wp-json/wp/v2/company"
-WP_MEDIA_URL = "https://kenya.mimusjobs.com/wp-json/wp/v2/media"
+WP_URL = "https://southafrica.mimusjobs.com/wp-json/wp/v2/job-listings"
+WP_COMPANY_URL = "https://southafrica.mimusjobs.com/wp-json/wp/v2/company"
+WP_MEDIA_URL = "https://southafrica.mimusjobs.com/wp-json/wp/v2/media"
 WP_USERNAME = "admin"
 WP_APP_PASSWORD = "Xljs I1VY 7XL0 F45N 3Wsv 5qcv"
-PROCESSED_IDS_FILE = "kenya_processed_job_ids.csv"
+PROCESSED_IDS_FILE = "southafrica_processed_job_ids.csv"
 LAST_PAGE_FILE = "last_processed_page.txt"
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.93 Safari/537.36'
@@ -837,7 +837,7 @@ def paraphrase_strict_description(text, max_attempts=2, max_sub_attempts=2):
 
     return "\n\n".join(final_paraphrased)
 
-def load_kenya_processed_job_ids():
+def load_southafrica_processed_job_ids():
     if not os.path.exists(PROCESSED_IDS_FILE):
         logger.info(f"{PROCESSED_IDS_FILE} does not exist. Initializing empty sets.")
         return set(), set(), set()
@@ -1092,7 +1092,7 @@ def paraphrase_title_and_description(title, description, index, max_attempts=5):
     return print_word_by_word(f"Job Title: {rewritten_title}\n\nJob Description:\n{rewritten_description}"), rewritten_title, rewritten_description
 
 def get_region_term_id(location_value, auth, headers):
-    taxonomy_url = "https://kenya.mimusjobs.com/wp-json/wp/v2/job_listing_region"
+    taxonomy_url = "https://southafrica.mimusjobs.com/wp-json/wp/v2/job_listing_region"
     location_slug = location_value.lower().replace(' ', '-')
     try:
         response = requests.get(f"{taxonomy_url}?slug={location_slug}", headers=headers, timeout=10, verify=False)
@@ -1115,7 +1115,7 @@ def get_region_term_id(location_value, auth, headers):
         return None
 
 def get_job_type_term_id(job_type_value, auth, headers):
-    taxonomy_url = "https://kenya.mimusjobs.com/wp-json/wp/v2/job_listing_type"
+    taxonomy_url = "https://southafrica.mimusjobs.com/wp-json/wp/v2/job_listing_type"
     job_type_slug = job_type_value.lower().replace(' ', '-')
     try:
         response = requests.get(f"{taxonomy_url}?slug={job_type_slug}", headers=headers, timeout=10, verify=False)
@@ -1138,7 +1138,7 @@ def get_job_type_term_id(job_type_value, auth, headers):
         return None
 
 def initialize_job_type_terms(auth, headers):
-    taxonomy_url = "https://kenya.mimusjobs.com/wp-json/wp/v2/job_listing_type"
+    taxonomy_url = "https://southafrica.mimusjobs.com/wp-json/wp/v2/job_listing_type"
     for job_type, slug in JOB_TYPE_MAPPING.items():
         try:
             response = requests.get(f"{taxonomy_url}?slug={slug}", headers=headers, timeout=10, verify=False)
@@ -1506,8 +1506,8 @@ def scrape_job_details(job_url):
         return None, None
 
 def crawl_and_process():
-    kenya_processed_job_ids, processed_job_urls, processed_companies = load_kenya_processed_job_ids()
-    print(f"Loaded {len(kenya_processed_job_ids)} previously processed Job IDs, {len(processed_job_urls)} URLs, and {len(processed_companies)} companies")
+    southafrica_processed_job_ids, processed_job_urls, processed_companies = load_southafrica_processed_job_ids()
+    print(f"Loaded {len(southafrica_processed_job_ids)} previously processed Job IDs, {len(processed_job_urls)} URLs, and {len(processed_companies)} companies")
     start_page = load_last_processed_page()
     for i in range(start_page, 0, -1):
         url = f'https://www.myjobmag.co.za/page/{i}'
@@ -1542,7 +1542,7 @@ def crawl_and_process():
                 if not job_id or pd.isna(job_id):
                     print(f"Skipping job {job_number}: Empty or invalid Job ID.")
                     continue
-                if job_id in kenya_processed_job_ids:
+                if job_id in southafrica_processed_job_ids:
                     print(f"Skipping job {job_number}: Job ID {job_id} already processed.")
                     continue
                 if not job_title or pd.isna(job_title):
