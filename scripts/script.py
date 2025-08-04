@@ -58,7 +58,7 @@ login(token="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")
 
 # Initialize model and tokenizer
 device = torch.device("cpu")  # Always CPU
-model_name = "Qwen/Qwen3-0.6B"
+model_name = "mistralai/Mistral-7B-Instruct-v0.1"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForCausalLM.from_pretrained(model_name)
 #model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
