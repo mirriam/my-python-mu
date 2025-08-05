@@ -60,8 +60,8 @@ login(token="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")
 device = torch.device("cpu")  # Always CPU
 model_name = "google/gemma-2b"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
-#model = AutoModelForCausalLM.from_pretrained(model_name)
-model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+model = AutoModelForCausalLM.from_pretrained(model_name)
+#model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
 model.eval()
 model.to(device)
 
