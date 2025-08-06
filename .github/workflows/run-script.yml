@@ -68,8 +68,11 @@ jobs:
             echo "Job ID,Job URL,Company Name,URL Page,Job Number" > southafrica_processed_job_ids.csv
           fi
 
+      - name: Debug directory contents
+        run: ls -R
+
       - name: Run script
-        run: python script.py
+        run: python scripts/script.py
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
