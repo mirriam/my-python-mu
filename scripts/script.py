@@ -1571,6 +1571,7 @@ def crawl_and_process():
                 post_id, post_url = save_article_to_wordpress(index, job_data, rewritten_title, rewritten_description, application)
                 if post_id:
                     print(f"Successfully posted job {job_number} (Job ID: {job_id}, URL: {job_url}) to WordPress. Post ID: {post_id}, URL: {post_url}")
+                    save_processed_job_id(job_id, job_url, company_name, i, job_number)
                 else:
                     print(f"Failed to post job {job_number} (Job ID: {job_id}, URL: {job_url}) to WordPress.")
                     save_processed_job_id(job_id, job_url, company_name, i, job_number)
