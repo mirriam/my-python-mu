@@ -1586,7 +1586,7 @@ def crawl_and_process():
 
 def main():
     # Initialize models once
-    initialize_models()
+    #initialize_models()
     
     max_retries = 3
     for attempt in range(max_retries):
