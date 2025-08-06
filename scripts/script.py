@@ -39,20 +39,18 @@ console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(
 logger.addHandler(console_handler)
 warnings.filterwarnings("ignore", category=requests.packages.urllib3.exceptions.InsecureRequestWarning)
 
-# Download NLTK punkt_tab and averaged_perceptron_tagger if not already present
+# Download NLTK resources
 try:
     nltk.data.find('tokenizers/punkt_tab')
 except LookupError:
     nltk.download('punkt_tab')
 try:
-    nltk.data.find('taggers/averaged_perceptron_tagger')
+    nltk.data.find('taggers/averaged_perceptron_tagger_eng')
 except LookupError:
-    nltk.download('averaged_perceptron_tagger')
+    nltk.download('averaged_perceptron_tagger_eng')
 
 # Initialize language tool
 tool = language_tool_python.LanguageTool('en-US')
-
-
 
 # Initialize model and tokenizer
 device = torch.device("cpu")  # Always CPU
@@ -152,795 +150,6 @@ def contains_nouns(paraphrase, required_nouns):
     return all(noun.lower() in paraphrase_lower for noun in required_nouns)
 
 def extract_capitalized_words(text):
-    """Extract words with specific capitalization (e.g., proper nouns, acronyms) from the input text."""
-    import re
-    words = re.findall(r'\b[A-Z][a-zA-Z]*\b', text)  # Matches words starting with a capital letter
-    return {word: word for word in words if len(word) > 1}  # Dictionary to map lowercase to original case
-
-def restore_capitalization(paraphrased, capitalized_words):
-    """Restore original capitalization of specified words in the paraphrased text."""
-    paraphrased_lower = paraphrased.lower()
-    result = paraphrased
-    for lower_word, orig_word in capitalized_words.items():
-        pattern = r'\b' + re.escape(lower_word) + r'\b'
-        result = re.sub(pattern, orig_word, result, flags=re.IGNORECASE)
-    return result
-
-def paraphrase_strict_title(title, max_attempts=3, max_sub_attempts=2):
-    def has_repetitions(text):
-        tokens = text.lower().split()
-        seen = set()
-        for i in range(len(tokens) - 2):
-            ngram = tuple(tokens[i:i + 3])
-            if ngram in seen:
-                return True
-            seen.add(ngram)
-        return False
-
-    def contains_banned_phrase(text, banned_list):
-        text_lower = text.lower()
-        critical_phrases = [
-            "Rewrite the following", "Paraphrased title", "Professionally rewrite",
-            "Keep it short", "Use different phrasing", "Short (5–12 words)",
-            "Paraphrase", "Paraphrased", "Paraphrasing", "Paraphrased version",
-            "Summary", "Summarised", "Summarized", "Summarizing", "Summarising","None.","None","none",
-            ".",":"
-        ]
-        for phrase in critical_phrases:
-            if phrase.lower() in text_lower:
-                start_idx = text_lower.find(phrase.lower())
-                context_start = max(0, start_idx - 20)
-                context_end = min(len(text), start_idx + len(phrase) + 20)
-                context_snippet = text[context_start:context_end]
-                if context_start > 0:
-                    context_snippet = "..." + context_snippet
-                if context_end < len(text):
-                    context_snippet = context_snippet + "..."
-                return True, phrase, context_snippet
-        return False, None, None
-
-    def score_paraphrase(original, paraphrased, target_wc):
-        sim = is_good_paraphrase(original, paraphrased)
-        wc = len(paraphrased.split())
-        length_penalty = abs(wc - target_wc) / max(target_wc, 1)
-        return (sim + (1 - length_penalty)) / 2, sim, wc
-
-    clean_title = sanitize_text(title)
-    if not clean_title:
-        logger.error("Input title is empty after sanitization.")
-        return title
-
-    nouns = extract_nouns(clean_title)
-    capitalized_words = extract_capitalized_words(clean_title)
-    nouns_str = ", ".join(nouns) if nouns else "none"
-    logger.debug(f"Extracted nouns from title '{clean_title}': {nouns}")
-    logger.debug(f"Extracted capitalized words from title '{clean_title}': {list(capitalized_words.values())}")
-
-    prompt = (
-        f"Rewrite the following job title professionally, using different phrasing while preserving the meaning. "
-        f"Keep it short (5–12 words) and avoid duplicating words. "
-        f"Preserve the following nouns exactly as they are: {nouns_str}.\n{clean_title}"
-    )
-
-    encoding = tokenizer.encode_plus(
-        prompt,
-        return_tensors="pt",
-        truncation=True,
-        max_length=MAX_TOTAL_TOKENS
-    ).to(device)
-
-    available_output_tokens = 60
-    target_word_count = len(clean_title.split())
-    min_wc = max(1, int(target_word_count * 0.6))
-    max_wc = min(12, int(target_word_count * 1.4))
-
-    best_paraphrase = None
-    best_score = -1
-    best_attempt = ""
-    best_metadata = ""
-
-    for attempt in range(max_attempts):
-        sub_attempt = 0
-        valid_paraphrase_found = False
-
-        while not valid_paraphrase_found and sub_attempt < max_sub_attempts:
-            try:
-                with torch.no_grad():
-                    output = model.generate(
-                        input_ids=encoding['input_ids'],
-                        attention_mask=encoding['attention_mask'],
-                        max_new_tokens=available_output_tokens,
-                        do_sample=True,
-                        top_k=40,
-                        top_p=0.95,
-                        temperature=0.8 + 0.1 * sub_attempt,
-                        repetition_penalty=1.2,
-                        no_repeat_ngram_size=3,
-                        num_return_sequences=MAX_RETURN_SEQUENCES
-                    )
-
-                decoded_outputs = [
-                    tokenizer.decode(seq, skip_special_tokens=True).strip()
-                    for seq in output
-                ]
-
-                for idx, d in enumerate(decoded_outputs):
-                    paraphrased = d.replace(prompt, "").strip() if prompt in d else d.strip()
-                    paraphrased = clean_description(paraphrased)
-                    paraphrased = restore_capitalization(paraphrased, capitalized_words)
-
-                    if not paraphrased or len(paraphrased.split()) < 1:
-                        logger.info(f"⛔ Rejected due to empty or too short: \"{paraphrased}\"")
-                        continue
-
-                    is_banned, banned_phrase, context_snippet = contains_banned_phrase(paraphrased, [])
-                    if is_banned:
-                        logger.info(f"⛔ Rejected due to banned phrase '{banned_phrase}' in context: '{context_snippet}' in output: \"{paraphrased}\"")
-                        print(f"⛔ Rejected due to banned phrase '{banned_phrase}' in context: '{context_snippet}' in output: \"{paraphrased}\"")
-                        continue
-                    if has_repetitions(paraphrased):
-                        logger.info(f"⛔ Rejected due to repeated phrases: \"{paraphrased}\"")
-                        continue
-                    if not is_grammatically_correct(paraphrased):
-                        logger.info(f"⛔ Rejected due to grammar: \"{paraphrased}\"")
-                        continue
-                    if not contains_nouns(paraphrased, nouns):
-                        logger.info(f"⛔ Rejected due to missing nouns: \"{paraphrased}\" (required: {nouns})")
-                        continue
-
-                    score, sim, wc = score_paraphrase(title, paraphrased, target_word_count)
-                    first_diff = not paraphrased.lower().startswith(title.lower())
-
-                    print(f"📝 Attempt {attempt + 1}.{sub_attempt + 1}, Option {idx + 1}")
-                    print(f"↪ Words: {wc}, Sim: {sim:.2f}, Score: {score:.2f}, First different: {first_diff}")
-                    print(f"→ Paraphrased: {paraphrased}\n")
-
-                    is_valid = (
-                        min_wc <= wc <= max_wc
-                        and sim >= (0.65 if target_word_count > 5 else 0.6)
-                        and first_diff
-                    )
-
-                    if is_valid:
-                        print(f"✅ Picked from attempt {attempt + 1}.{sub_attempt + 1}, option {idx + 1}")
-                        print(f"→ {paraphrased}\n")
-                        return paraphrased
-
-                    if first_diff and score > best_score:
-                        best_score = score
-                        best_paraphrase = paraphrased
-                        best_attempt = f"{attempt + 1}.{sub_attempt + 1}, option {idx + 1}"
-                        best_metadata = (
-                            f"↪ Words: {wc}, Sim: {sim:.2f}, Score: {score:.2f}, First different: {first_diff}\n"
-                            f"→ Paraphrased: {paraphrased}"
-                        )
-
-                sub_attempt += 1
-                time.sleep(0.5 * (2 ** sub_attempt))
-
-            except Exception as e:
-                logger.error(f"Error during attempt {attempt + 1}, sub-attempt {sub_attempt + 1}: {str(e)}")
-                sub_attempt += 1
-                time.sleep(0.5 * (2 ** sub_attempt))
-
-        time.sleep(1)
-
-    if best_paraphrase:
-        print(f"✅ Picked fallback from attempt {best_attempt}")
-        print(best_metadata + "\n")
-        return best_paraphrase
-
-    print("❌ Fallback to original title.\n")
-    return clean_title
-
-def paraphrase_strict_company(text, max_attempts=2, max_sub_attempts=2):
-    def contains_prompt(para):
-        prompt_phrases = [
-            "Rephrase the following company details paragraph",
-            "Rephrase the company details",
-            "Paragraph professionally, preserving all key details",
-            "Rewrite the following",
-            "Rephrase the paragraph below",
-            "Rephrase the following company details",
-            "Preserving all key details",
-            "Tone and structure",
-            "Keep the length approximately the same",
-            "Do your company information paragraph need improvements",
-            "Paraphrase", "Paraphrased", "Paraphrasing", "Paragraph", "Company details",
-        ]
-        para_lower = para.lower()
-        for phrase in prompt_phrases:
-            if phrase.lower() in para_lower:
-                start_idx = para_lower.find(phrase.lower())
-                context_start = max(0, start_idx - 20)
-                context_end = min(len(para), start_idx + len(phrase) + 20)
-                context_snippet = para[context_start:context_end]
-                if context_start > 0:
-                    context_snippet = "..." + context_snippet
-                if context_end < len(para):
-                    context_snippet = context_snippet + "..."
-                return True, phrase, context_snippet
-        return False, None, None
-
-    clean_text = sanitize_text(text)
-    if not clean_text:
-        logger.error("Input text is empty after sanitization.")
-        return text
-
-    capitalized_words = extract_capitalized_words(clean_text)
-    logger.debug(f"Extracted capitalized words from text: {list(capitalized_words.values())}")
-
-    paragraphs = [p.strip() for p in clean_text.split('\n') if p.strip()]
-    final_paraphrased = []
-
-    for idx, para in enumerate(paragraphs):
-        print(f"\n🔹 Paraphrasing Paragraph {idx + 1}/{len(paragraphs)}")
-
-        prompt = (
-            f"Rephrase the following company details paragraph professionally, preserving all key details, tone, and structure. "
-            f"Keep the length approximately the same and avoid repeating the input format:\n{para}"
-        )
-
-        prompt_tokens = tokenizer.encode(prompt, add_special_tokens=True)
-        prompt_token_len = len(prompt_tokens)
-
-        if prompt_token_len > MAX_TOTAL_TOKENS - 200:
-            logger.warning(f"Prompt for paragraph {idx + 1} too long, truncating to fit.")
-            para = " ".join(para.split()[:int((MAX_TOTAL_TOKENS - 200) / 4)])
-            prompt = (
-                f"Rephrase the following company details paragraph professionally, preserving all key details, tone, and structure. "
-                f"Keep the length approximately the same:\n{para}"
-            )
-            prompt_tokens = tokenizer.encode(prompt, add_special_tokens=True)
-            prompt_token_len = len(prompt_tokens)
-
-        available_output_tokens = max(200, MAX_TOTAL_TOKENS - prompt_token_len)
-        target_word_count = len(para.split())
-        tolerance = 0.25
-        min_wc = int(target_word_count * (1 - tolerance))
-        max_wc = int(target_word_count * (1 + tolerance))
-
-        encoding = tokenizer.encode_plus(
-            prompt,
-            return_tensors="pt",
-            truncation=True,
-            max_length=MAX_TOTAL_TOKENS
-        ).to(device)
-
-        best_paraphrase = None
-        best_score = -1
-        best_attempt = ""
-        best_metadata = ""
-
-        for attempt in range(max_attempts):
-            sub_attempt = 0
-            valid_paraphrase_found = False
-
-            while not valid_paraphrase_found and sub_attempt < max_sub_attempts:
-                try:
-                    with torch.no_grad():
-                        output = model.generate(
-                            input_ids=encoding['input_ids'],
-                            attention_mask=encoding['attention_mask'],
-                            max_new_tokens=available_output_tokens,
-                            do_sample=True,
-                            top_k=40,
-                            top_p=0.95,
-                            temperature=0.9 + 0.1 * sub_attempt,
-                            repetition_penalty=1.1,
-                            no_repeat_ngram_size=2,
-                            num_return_sequences=MAX_RETURN_SEQUENCES
-                        )
-
-                    decoded = [tokenizer.decode(seq, skip_special_tokens=True).strip() for seq in output]
-
-                    for option_index, d in enumerate(decoded):
-                        paraphrased = d.replace(prompt, "").strip() if prompt in d else d.strip()
-                        paraphrased = clean_description(paraphrased)
-                        paraphrased = restore_capitalization(paraphrased, capitalized_words)
-
-                        if not paraphrased or len(paraphrased.split()) < 5:
-                            logger.info(f"⛔ Rejected due to empty or too short: \"{paraphrased}\"")
-                            continue
-                        is_banned, banned_phrase, context_snippet = contains_prompt(paraphrased)
-                        if is_banned:
-                            print(f"❌ Rejected due to prompt echo (phrase: '{banned_phrase}' in context: '{context_snippet}' in output: \"{paraphrased}\")")
-                            logger.info(f"❌ Rejected due to prompt echo (phrase: '{banned_phrase}' in context: '{context_snippet}' in output: \"{paraphrased}\")")
-                            continue
-
-                        word_count = len(paraphrased.split())
-                        similarity = is_good_paraphrase(para, paraphrased)
-                        score = (similarity + (1 - abs(word_count - target_word_count) / max(target_word_count, 1))) / 2
-
-                        first_sentence = paraphrased.split(".")[0].strip()
-                        original_first = para.split(".")[0].strip()
-                        first_diff = not first_sentence.lower().startswith(original_first.lower())
-
-                        print(f"📝 Attempt {attempt + 1}.{sub_attempt + 1}, Option {option_index + 1}")
-                        print(f"↪ Words: {word_count}, Sim: {similarity:.2f}, Score: {score:.2f}, First sentence different: {first_diff}")
-                        print(f"→ First sentence: {first_sentence}\n")
-
-                        is_valid = (
-                            min_wc <= word_count <= max_wc
-                            and similarity >= (0.65 if target_word_count > 10 else 0.6)
-                            and first_diff
-                            and is_grammatically_correct(paraphrased)
-                        )
-
-                        if is_valid:
-                            print(f"✅ Picked from attempt {attempt + 1}.{sub_attempt + 1}, option {option_index + 1}")
-                            final_paraphrased.append(clean_description(paraphrased))
-                            valid_paraphrase_found = True
-                            break
-
-                        if first_diff and score > best_score:
-                            best_score = score
-                            best_paraphrase = paraphrased
-                            best_attempt = f"{attempt + 1}.{sub_attempt + 1}, option {option_index + 1}"
-                            best_metadata = (
-                                f"↪ Words: {word_count}, Sim: {similarity:.2f}, Score: {score:.2f}, First sentence different: {first_diff}\n"
-                                f"→ First sentence: {first_sentence}"
-                            )
-
-                    if not valid_paraphrase_found:
-                        sub_attempt += 1
-                        time.sleep(0.5 * (2 ** sub_attempt))
-
-                except Exception as e:
-                    logger.error(f"Error during attempt {attempt + 1}, sub-attempt {sub_attempt + 1} for paragraph {idx + 1}: {str(e)}")
-                    sub_attempt += 1
-                    time.sleep(0.5 * (2 ** sub_attempt))
-
-            if valid_paraphrase_found:
-                break
-            time.sleep(1)
-
-        if not valid_paraphrase_found:
-            if best_paraphrase:
-                print(f"✅ Picked fallback from attempt {best_attempt}")
-                print(best_metadata + "\n")
-                final_paraphrased.append(clean_description(best_paraphrase))
-            else:
-                print(f"❌ Paragraph {idx + 1} fallback to original.\n")
-                final_paraphrased.append(para)
-
-    return "\n\n".join(final_paraphrased)
-
-def paraphrase_strict_tagline(company_tagline, max_attempts=5):
-    clean_text = sanitize_text(company_tagline)
-    if not clean_text:
-        logger.error(f"Input text is empty after sanitization: {company_tagline}")
-        print("Error: Input text is empty after sanitization.")
-        return company_tagline
-
-    capitalized_words = extract_capitalized_words(clean_text)
-    logger.debug(f"Extracted capitalized words from tagline: {list(capitalized_words.values())}")
-
-    target_word_count = max(len(clean_text.split()), 8)
-    min_word_count = 4
-    max_word_count = 15
-
-    rejected_phrases = [
-        "Paraphrased tagline", "Rewrite the following", "Original tagline",
-        "Professionally rewritten", "Crisp and impactful", "Summary:",
-        "Short and professional", "Keep it short", "###", "Tagline:",
-        "Output:", "Company summary", "Paraphrased version", "Rephrased version",
-        "Paraphrase", "Paraphrased", "Paraphrasing", "Summarized", "Summarised",
-        "Summarizing", "Summarising", "Summary"
-    ]
-
-    def contains_rejected_phrase(text):
-        lower = text.lower()
-        for bad_phrase in rejected_phrases:
-            if bad_phrase.lower() in lower:
-                start_idx = lower.find(bad_phrase.lower())
-                context_start = max(0, start_idx - 20)
-                context_end = min(len(text), start_idx + len(bad_phrase) + 20)
-                context_snippet = text[context_start:context_end]
-                if context_start > 0:
-                    context_snippet = "..." + context_snippet
-                if context_end < len(text):
-                    context_snippet = context_snippet + "..."
-                return True, bad_phrase, context_snippet
-        return False, None, None
-
-    def first_sentence_diff(original, paraphrased):
-        orig_first = original.split(".")[0].strip().lower()
-        para_first = paraphrased.split(".")[0].strip().lower()
-        return not para_first.startswith(orig_first)
-
-    input_prompt = (
-        f"Rewrite the following tagline into a crisp, professional, and meaningful summary. "
-        f"Keep it short and impactful (5–12 words):\n\n"
-        f"### Original ###\n{clean_text}\n\n### Paraphrased Tagline ###"
-    )
-
-    input_tokens = tokenizer.encode(input_prompt, add_special_tokens=True)
-    max_length = min(len(input_tokens) + 50, 512)
-
-    encoding = tokenizer.encode_plus(
-        input_prompt,
-        return_tensors="pt",
-        truncation=True,
-        max_length=max_length
-    ).to(device)
-
-    best_paraphrase = None
-    best_score = -1
-    best_meta = {"attempt": -1, "similarity": 0.0, "word_count": 0, "first_diff": False}
-
-    for attempt in range(max_attempts):
-        try:
-            with torch.no_grad():
-                outputs = model.generate(
-                    input_ids=encoding['input_ids'],
-                    attention_mask=encoding['attention_mask'],
-                    max_new_tokens=25,
-                    do_sample=True,
-                    top_k=50,
-                    top_p=0.9,
-                    temperature=0.9,
-                    repetition_penalty=1.2,
-                    no_repeat_ngram_size=2,
-                    num_return_sequences=6,
-                    eos_token_id=tokenizer.eos_token_id
-                )
-
-            decoded_outputs = [
-                tokenizer.decode(seq, skip_special_tokens=True).strip()
-                for seq in outputs
-            ]
-
-            paraphrases = []
-            for d in decoded_outputs:
-                if "### Paraphrased Tagline ###" in d:
-                    parts = d.split("### Paraphrased Tagline ###")
-                    paraphrased = clean_description(parts[1]) if len(parts) >= 2 else clean_description(d)
-                else:
-                    paraphrased = clean_description(d)
-                paraphrased = restore_capitalization(paraphrased, capitalized_words)
-                paraphrases.append(paraphrased)
-
-            for paraphrased in paraphrases:
-                is_banned, banned_phrase, context_snippet = contains_rejected_phrase(paraphrased)
-                if is_banned:
-                    logger.info(f"⛔ Rejected tagline due to banned phrase '{banned_phrase}' in context: '{context_snippet}' in output: \"{paraphrased}\"")
-                    print(f"⛔ Rejected tagline due to banned phrase '{banned_phrase}' in context: '{context_snippet}' in output: \"{paraphrased}\"")
-                    continue
-
-                if not is_grammatically_correct(paraphrased):
-                    logger.info(f"⛔ Rejected tagline due to grammar: \"{paraphrased}\"")
-                    continue
-
-                word_count = len(paraphrased.split())
-                if word_count < min_word_count or word_count > max_word_count:
-                    continue
-
-                similarity = is_good_paraphrase(clean_text, paraphrased)
-                length_score = 1 - abs(target_word_count - word_count) / target_word_count
-                score = similarity * 0.7 + length_score * 0.3
-                first_diff = first_sentence_diff(clean_text, paraphrased)
-
-                print(f"Attempt {attempt + 1}: \"{paraphrased}\" | Words: {word_count} | Similarity: {similarity:.2f} | Score: {score:.2f} | First sentence different: {first_diff}")
-
-                if first_diff and score > best_score:
-                    best_paraphrase = paraphrased
-                    best_meta = {
-                        "attempt": attempt + 1,
-                        "similarity": similarity,
-                        "word_count": word_count,
-                        "first_diff": first_diff
-                    }
-
-        except Exception as e:
-            logger.error(f"Error during paraphrasing attempt {attempt + 1}: {str(e)}")
-
-        if attempt < max_attempts - 1:
-            time.sleep(2 ** attempt)
-
-    if best_paraphrase:
-        logger.info(
-            f"✅ Picked tagline from attempt {best_meta['attempt']} "
-            f"(words: {best_meta['word_count']}, similarity: {best_meta['similarity']:.2f}, score: {best_score:.2f}, first sentence different: {best_meta['first_diff']})"
-        )
-        print(
-            f"\n✅ Picked tagline from attempt {best_meta['attempt']} "
-            f"(words: {best_meta['word_count']}, similarity: {best_meta['similarity']:.2f}, score: {best_score:.2f}, first sentence different: {best_meta['first_diff']})"
-        )
-        return best_paraphrase
-
-    logger.warning("No valid tagline candidates produced. Returning original.")
-    return clean_text
-
-def paraphrase_strict_description(text, max_attempts=2, max_sub_attempts=2):
-    def contains_prompt(para):
-        prompt_phrases = [
-            "Rephrase the following job description paragraph",
-            "Rephrase the job description",
-            "Paragraph professionally, preserving all key details",
-            "Rewrite the following",
-            "Rephrase the paragraph below",
-            "Rephrase the following job description",
-            "Preserving all key details",
-            "Tone and structure",
-            "Keep the length approximately the same",
-            "Job description paragraph professionally",
-            "Paraphrase", "Paraphrased", "Paraphrase the following",
-            "Paraphrase the job description", "Paraphrasing",
-            "Job description", "Job description paragraph",
-        ]
-        para_lower = para.lower()
-        for phrase in prompt_phrases:
-            if phrase.lower() in para_lower:
-                start_idx = para_lower.find(phrase.lower())
-                context_start = max(0, start_idx - 20)
-                context_end = min(len(para), start_idx + len(phrase) + 20)
-                context_snippet = para[context_start:context_end]
-                if context_start > 0:
-                    context_snippet = "..." + context_snippet
-                if context_end < len(para):
-                    context_snippet = context_snippet + "..."
-                return True, phrase, context_snippet
-        return False, None, None
-
-    clean_text = sanitize_text(text)
-    if not clean_text:
-        logger.error("Input text is empty after sanitization.")
-        return text
-
-    capitalized_words = extract_capitalized_words(clean_text)
-    logger.debug(f"Extracted capitalized words from text: {list(capitalized_words.values())}")
-
-    paragraphs = [p.strip() for p in clean_text.split('\n') if p.strip()]
-    final_paraphrased = []
-
-    for idx, para in enumerate(paragraphs):
-        print(f"\n🔹 Paraphrasing Paragraph {idx + 1}/{len(paragraphs)}")
-
-        prompt = (
-            f"Rephrase the following job description paragraph professionally, preserving all key details, tone, and structure. "
-            f"Keep the length approximately the same and avoid repeating the input format:\n{para}"
-        )
-
-        prompt_tokens = tokenizer.encode(prompt, add_special_tokens=True)
-        prompt_token_len = len(prompt_tokens)
-
-        if prompt_token_len > MAX_TOTAL_TOKENS - 200:
-            logger.warning(f"Prompt for paragraph {idx + 1} too long, truncating to fit.")
-            para = " ".join(para.split()[:int((MAX_TOTAL_TOKENS - 200) / 4)])
-            prompt = (
-                f"Rephrase the following job description paragraph professionally, preserving all key details, tone, and structure. "
-                f"Keep the length approximately the same:\n{para}"
-            )
-            prompt_tokens = tokenizer.encode(prompt, add_special_tokens=True)
-            prompt_token_len = len(prompt_tokens)
-
-        available_output_tokens = max(200, MAX_TOTAL_TOKENS - prompt_token_len)
-        target_word_count = len(para.split())
-        tolerance = 0.25
-        min_wc = int(target_word_count * (1 - tolerance))
-        max_wc = int(target_word_count * (1 + tolerance))
-
-        encoding = tokenizer.encode_plus(
-            prompt,
-            return_tensors="pt",
-            truncation=True,
-            max_length=MAX_TOTAL_TOKENS
-        ).to(device)
-
-        best_paraphrase = None
-        best_score = -1
-        best_attempt = ""
-        best_metadata = ""
-
-        for attempt in range(max_attempts):
-            sub_attempt = 0
-            valid_paraphrase_found = False
-
-            while not valid_paraphrase_found and sub_attempt < max_sub_attempts:
-                try:
-                    with torch.no_grad():
-                        output = model.generate(
-                            input_ids=encoding['input_ids'],
-                            attention_mask=encoding['attention_mask'],
-                            max_new_tokens=available_output_tokens,
-                            do_sample=True,
-                            top_k=40,
-                            top_p=0.95,
-                            temperature=0.9 + 0.1 * sub_attempt,
-                            repetition_penalty=1.1,
-                            no_repeat_ngram_size=2,
-                            num_return_sequences=MAX_RETURN_SEQUENCES
-                        )
-
-                    decoded = [tokenizer.decode(seq, skip_special_tokens=True).strip() for seq in output]
-
-                    for option_index, d in enumerate(decoded):
-                        paraphrased = d.replace(prompt, "").strip() if prompt in d else d.strip()
-                        paraphrased = clean_description(paraphrased)
-                        paraphrased = restore_capitalization(paraphrased, capitalized_words)
-
-                        if not paraphrased or len(paraphrased.split()) < 5:
-                            logger.info(f"⛔ Rejected due to empty or too short: \"{paraphrased}\"")
-                            continue
-                        is_banned, banned_phrase, context_snippet = contains_prompt(paraphrased)
-                        if is_banned:
-                            print(f"❌ Rejected due to prompt echo (phrase: '{banned_phrase}' in context: '{context_snippet}' in output: \"{paraphrased}\")")
-                            logger.info(f"❌ Rejected due to prompt echo (phrase: '{banned_phrase}' in context: '{context_snippet}' in output: \"{paraphrased}\")")
-                            continue
-
-                        word_count = len(paraphrased.split())
-                        similarity = is_good_paraphrase(para, paraphrased)
-                        score = (similarity + (1 - abs(word_count - target_word_count) / max(target_word_count, 1))) / 2
-
-                        first_sentence = paraphrased.split(".")[0].strip()
-                        original_first = para.split(".")[0].strip()
-                        first_diff = not first_sentence.lower().startswith(original_first.lower())
-
-                        print(f"📝 Attempt {attempt + 1}.{sub_attempt + 1}, Option {option_index + 1}")
-                        print(f"↪ Words: {word_count}, Sim: {similarity:.2f}, Score: {score:.2f}, First sentence different: {first_diff}")
-                        print(f"→ First sentence: {first_sentence}\n")
-
-                        is_valid = (
-                            min_wc <= word_count <= max_wc
-                            and similarity >= (0.65 if target_word_count > 10 else 0.6)
-                            and first_diff
-                            and is_grammatically_correct(paraphrased)
-                        )
-
-                        if is_valid:
-                            print(f"✅ Picked from attempt {attempt + 1}.{sub_attempt + 1}, option {option_index + 1}")
-                            final_paraphrased.append(clean_description(paraphrased))
-                            valid_paraphrase_found = True
-                            break
-
-                        if first_diff and score > best_score:
-                            best_score = score
-                            best_paraphrase = paraphrased
-                            best_attempt = f"{attempt + 1}.{sub_attempt + 1}, option {option_index + 1}"
-                            best_metadata = (
-                                f"↪ Words: {word_count}, Sim: {similarity:.2f}, Score: {score:.2f}, First sentence different: {first_diff}\n"
-                                f"→ First sentence: {first_sentence}"
-                            )
-
-                    if not valid_paraphrase_found:
-                        sub_attempt += 1
-                        time.sleep(0.5 * (2 ** sub_attempt))
-
-                except Exception as e:
-                    logger.error(f"Error during attempt {attempt + 1}, sub-attempt {sub_attempt + 1} for paragraph {idx + 1}: {str(e)}")
-                    sub_attempt += 1
-                    time.sleep(0.5 * (2 ** sub_attempt))
-
-            if valid_paraphrase_found:
-                break
-            time.sleep(1)
-
-        if not valid_paraphrase_found:
-            if best_paraphrase:
-                print(f"✅ Picked fallback from attempt {best_attempt}")
-                print(best_metadata + "\n")
-                final_paraphrased.append(clean_description(best_paraphrase))
-            else:
-                print(f"❌ Paragraph {idx + 1} fallback to original.\n")
-                final_paraphrased.append(para)
-
-    return "\n\n".join(final_paraphrased)
-
-def load_southafrica_processed_job_ids():
-    if not os.path.exists(PROCESSED_IDS_FILE):
-        logger.info(f"{PROCESSED_IDS_FILE} does not exist. Initializing empty sets.")
-        return set(), set(), set()
-    try:
-        df = pd.read_csv(PROCESSED_IDS_FILE)
-        required_columns = ['Job ID', 'Job URL', 'Company Name', 'URL Page', 'Job Number']
-        for col in required_columns:
-            if col not in df.columns:
-                df[col] = ''
-        job_ids = set(df['Job ID'].fillna('').astype(str).tolist())
-        job_urls = set(df['Job URL'].fillna('').astype(str).tolist())
-        company_names = set(df['Company Name'].fillna('').astype(str).tolist())
-        logger.info(f"Loaded {len(job_ids)} Job IDs, {len(job_urls)} URLs, and {len(company_names)} companies")
-        return job_ids, job_urls, company_names
-    except Exception as e:
-        logger.error(f"Error reading {PROCESSED_IDS_FILE}: {str(e)}")
-        print(f"Error reading {PROCESSED_IDS_FILE}: {str(e)}. Using empty sets.")
-        return set(), set(), set()
-
-def save_processed_job_id(job_id, job_url, company_name, url_page, job_number):
-    try:
-        job_id = str(job_id)
-        job_url = sanitize_text(str(job_url), is_url=True)
-        company_name = sanitize_text(str(company_name))
-        url_page = str(url_page)
-        job_number = str(job_number)
-        new_row = pd.DataFrame({
-            'Job ID': [job_id],
-            'Job URL': [job_url],
-            'Company Name': [company_name],
-            'URL Page': [url_page],
-            'Job Number': [job_number]
-        })
-        if os.path.exists(PROCESSED_IDS_FILE):
-            df = pd.read_csv(PROCESSED_IDS_FILE)
-            if not df.empty and job_id not in df['Job ID'].astype(str).values:
-                df = pd.concat([df, new_row], ignore_index=True)
-                df.to_csv(PROCESSED_IDS_FILE, index=False)
-            elif df.empty:
-                new_row.to_csv(PROCESSED_IDS_FILE, index=False)
-        else:
-            new_row.to_csv(PROCESSED_IDS_FILE, index=False)
-        logger.info(f"Saved Job ID {job_id}, URL {job_url}, Company {company_name}, Page {url_page}, Job Number {job_number}")
-    except Exception as e:
-        logger.error(f"Error saving Job ID {job_id}: {str(e)}")
-        print(f"Error saving Job ID {job_id}: {str(e)}")
-        raise
-
-def sanitize_text(text, is_url=False, is_email=False):
-    """Sanitize input text by removing unwanted characters and normalizing."""
-    if not isinstance(text, str):
-        text = str(text)
-    text = text.strip()
-    if not text:
-        return ""
-    if is_url or is_email:
-        text = re.sub(r'[\r\t\f\v]', '', text)
-        text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)
-        text = re.sub(r'[ \t]+', ' ', text).strip()
-        return text
-    text = re.sub(r'#+\s*', '', text)
-    text = re.sub(r'\*\*', '', text)
-    text = re.sub(r'—+', '', text)
-    text = re.sub(r'←+', '', text)
-    text = re.sub(r'[^\x20-\x7E\n\u00C0-\u017F]', '', text)
-    text = re.sub(r'[ \t]+', ' ', text)
-    text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text).strip()
-    return text
-
-def clean_description(text):
-    """Clean paraphrased text using LanguageTool for grammar and style."""
-    try:
-        matches = tool.check(text)
-        corrected_text = language_tool_python.utils.correct(text, matches)
-        return corrected_text
-    except Exception as e:
-        logger.error(f"Error in grammar correction: {str(e)}")
-        return text
-
-def is_good_paraphrase(original: str, candidate: str) -> float:
-    """Calculate cosine similarity between original and paraphrased text."""
-    try:
-        embeddings = similarity_model.encode([original, candidate], convert_to_tensor=True)
-        sim_score = util.pytorch_cos_sim(embeddings[0], embeddings[1]).item()
-        return sim_score
-    except Exception as e:
-        logger.error(f"Error computing similarity: {str(e)}")
-        return 0.0
-
-def is_grammatically_correct(text):
-    """Check if text is grammatically correct with minimal issues."""
-    matches = tool.check(text)
-    return len(matches) < 3
-
-def extract_nouns(text):
-    """Extract nouns (NN, NNS, NNP, NNPS) from text using NLTK POS tagging."""
-    try:
-        tokens = nltk.word_tokenize(text)
-        tagged = nltk.pos_tag(tokens)
-        nouns = [word for word, pos in tagged if pos in ['NN', 'NNS', 'NNP', 'NNPS']]
-        return nouns
-    except Exception as e:
-        logger.error(f"Error extracting nouns from {text}: {str(e)}")
-        return []
-
-def contains_nouns(paraphrase, required_nouns):
-    """Check if the paraphrase contains all required nouns."""
-    if not required_nouns:
-        return True
-    paraphrase_lower = paraphrase.lower()
-    return all(noun.lower() in paraphrase_lower for noun in required_nouns)
-
-def extract_capitalized_words(text):
     """Extract words with specific capitalization (e.g., proper nouns, acronyms)."""
     words = re.findall(r'\b[A-Z][a-zA-Z]*\b', text)
     return {word: word for word in words if len(word) > 1}
@@ -953,6 +162,13 @@ def restore_capitalization(paraphrased, capitalized_words):
         pattern = r'\b' + re.escape(lower_word) + r'\b'
         result = re.sub(pattern, orig_word, result, flags=re.IGNORECASE)
     return result
+
+def score_paraphrase(original, paraphrased, target_wc):
+    """Calculate score for paraphrased text based on similarity and length."""
+    sim = is_good_paraphrase(original, paraphrased)
+    wc = len(paraphrased.split())
+    length_penalty = abs(wc - target_wc) / max(target_wc, 1)
+    return (sim + (1 - length_penalty)) / 2, sim, wc
 
 def paraphrase_strict_title(title, max_attempts=3, max_sub_attempts=2):
     def has_repetitions(text):
@@ -986,12 +202,6 @@ def paraphrase_strict_title(title, max_attempts=3, max_sub_attempts=2):
                     context_snippet = context_snippet + "..."
                 return True, phrase, context_snippet
         return False, None, None
-
-    def score_paraphrase(original, paraphrased, target_wc):
-        sim = is_good_paraphrase(original, paraphrased)
-        wc = len(paraphrased.split())
-        length_penalty = abs(wc - target_wc) / max(target_wc, 1)
-        return (sim + (1 - length_penalty)) / 2, sim, wc
 
     clean_title = sanitize_text(title)
     if not clean_title:
@@ -1303,10 +513,326 @@ def paraphrase_strict_company(text, max_attempts=2, max_sub_attempts=2):
         return text
     return result
 
+def paraphrase_strict_tagline(company_tagline, max_attempts=5):
+    clean_text = sanitize_text(company_tagline)
+    if not clean_text:
+        logger.error(f"Input text is empty after sanitization: {company_tagline}")
+        print("Error: Input text is empty after sanitization.")
+        return company_tagline
+
+    capitalized_words = extract_capitalized_words(clean_text)
+    logger.debug(f"Extracted capitalized words from tagline: {list(capitalized_words.values())}")
+
+    target_word_count = max(len(clean_text.split()), 8)
+    min_word_count = 4
+    max_word_count = 15
+
+    rejected_phrases = [
+        "Paraphrased tagline", "Rewrite the following", "Original tagline",
+        "Professionally rewritten", "Crisp and impactful", "Summary:",
+        "Short and professional", "Keep it short", "###", "Tagline:",
+        "Output:", "Company summary", "Paraphrased version", "Rephrased version",
+        "Paraphrase", "Paraphrased", "Paraphrasing", "Summarized", "Summarised",
+        "Summarizing", "Summarising", "Summary"
+    ]
+
+    def contains_rejected_phrase(text):
+        lower = text.lower()
+        for bad_phrase in rejected_phrases:
+            if bad_phrase.lower() in lower:
+                start_idx = lower.find(bad_phrase.lower())
+                context_start = max(0, start_idx - 20)
+                context_end = min(len(text), start_idx + len(bad_phrase) + 20)
+                context_snippet = text[context_start:context_end]
+                if context_start > 0:
+                    context_snippet = "..." + context_snippet
+                if context_end < len(text):
+                    context_snippet = context_snippet + "..."
+                return True, bad_phrase, context_snippet
+        return False, None, None
+
+    def first_sentence_diff(original, paraphrased):
+        orig_first = original.split(".")[0].strip().lower()
+        para_first = paraphrased.split(".")[0].strip().lower()
+        return not para_first.startswith(orig_first)
+
+    input_prompt = (
+        f"Rewrite the following tagline into a crisp, professional, and meaningful summary. "
+        f"Keep it short and impactful (5–12 words):\n\n"
+        f"### Original ###\n{clean_text}\n\n### Paraphrased Tagline ###"
+    )
+
+    input_tokens = tokenizer.encode(input_prompt, add_special_tokens=True)
+    max_length = min(len(input_tokens) + 50, 512)
+
+    encoding = tokenizer.encode_plus(
+        input_prompt,
+        return_tensors="pt",
+        truncation=True,
+        max_length=max_length
+    ).to(device)
+
+    best_paraphrase = None
+    best_score = -1
+    best_meta = {"attempt": -1, "similarity": 0.0, "word_count": 0, "first_diff": False}
+
+    for attempt in range(max_attempts):
+        try:
+            with torch.no_grad():
+                outputs = model.generate(
+                    input_ids=encoding['input_ids'],
+                    attention_mask=encoding['attention_mask'],
+                    max_new_tokens=25,
+                    do_sample=True,
+                    top_k=50,
+                    top_p=0.9,
+                    temperature=0.9,
+                    repetition_penalty=1.2,
+                    no_repeat_ngram_size=2,
+                    num_return_sequences=6,
+                    eos_token_id=tokenizer.eos_token_id
+                )
+
+            decoded_outputs = [
+                tokenizer.decode(seq, skip_special_tokens=True).strip()
+                for seq in outputs
+            ]
+
+            paraphrases = []
+            for d in decoded_outputs:
+                if "### Paraphrased Tagline ###" in d:
+                    parts = d.split("### Paraphrased Tagline ###")
+                    paraphrased = clean_description(parts[1]) if len(parts) >= 2 else clean_description(d)
+                else:
+                    paraphrased = clean_description(d)
+                paraphrased = restore_capitalization(paraphrased, capitalized_words)
+                paraphrases.append(paraphrased)
+
+            for paraphrased in paraphrases:
+                is_banned, banned_phrase, context_snippet = contains_rejected_phrase(paraphrased)
+                if is_banned:
+                    logger.info(f"⛔ Rejected tagline due to banned phrase '{banned_phrase}' in context: '{context_snippet}' in output: \"{paraphrased}\"")
+                    print(f"⛔ Rejected tagline due to banned phrase '{banned_phrase}' in context: '{context_snippet}' in output: \"{paraphrased}\"")
+                    continue
+
+                if not is_grammatically_correct(paraphrased):
+                    logger.info(f"⛔ Rejected tagline due to grammar: \"{paraphrased}\"")
+                    continue
+
+                word_count = len(paraphrased.split())
+                if word_count < min_word_count or word_count > max_word_count:
+                    continue
+
+                similarity = is_good_paraphrase(clean_text, paraphrased)
+                length_score = 1 - abs(target_word_count - word_count) / target_word_count
+                score = similarity * 0.7 + length_score * 0.3
+                first_diff = first_sentence_diff(clean_text, paraphrased)
+
+                print(f"Attempt {attempt + 1}: \"{paraphrased}\" | Words: {word_count} | Similarity: {similarity:.2f} | Score: {score:.2f} | First sentence different: {first_diff}")
+
+                if first_diff and score > best_score:
+                    best_paraphrase = paraphrased
+                    best_meta = {
+                        "attempt": attempt + 1,
+                        "similarity": similarity,
+                        "word_count": word_count,
+                        "first_diff": first_diff
+                    }
+
+        except Exception as e:
+            logger.error(f"Error during paraphrasing attempt {attempt + 1}: {str(e)}")
+
+        if attempt < max_attempts - 1:
+            time.sleep(2 ** attempt)
+
+    if best_paraphrase:
+        logger.info(
+            f"✅ Picked tagline from attempt {best_meta['attempt']} "
+            f"(words: {best_meta['word_count']}, similarity: {best_meta['similarity']:.2f}, score: {best_score:.2f}, first sentence different: {best_meta['first_diff']})"
+        )
+        print(
+            f"\n✅ Picked tagline from attempt {best_meta['attempt']} "
+            f"(words: {best_meta['word_count']}, similarity: {best_meta['similarity']:.2f}, score: {best_score:.2f}, first sentence different: {best_meta['first_diff']})"
+        )
+        return best_paraphrase
+
+    logger.warning("No valid tagline candidates produced. Returning original.")
+    return clean_text
+
+def paraphrase_strict_description(text, max_attempts=2, max_sub_attempts=2):
+    def contains_prompt(para):
+        prompt_phrases = [
+            "Rephrase the following job description paragraph",
+            "Rephrase the job description",
+            "Paragraph professionally, preserving all key details",
+            "Rewrite the following",
+            "Rephrase the paragraph below",
+            "Rephrase the following job description",
+            "Preserving all key details",
+            "Tone and structure",
+            "Keep the length approximately the same",
+            "Job description paragraph professionally",
+            "Paraphrase", "Paraphrased", "Paraphrase the following",
+            "Paraphrase the job description", "Paraphrasing",
+            "Job description", "Job description paragraph"
+        ]
+        para_lower = para.lower()
+        for phrase in prompt_phrases:
+            if phrase.lower() in para_lower:
+                start_idx = para_lower.find(phrase.lower())
+                context_start = max(0, start_idx - 20)
+                context_end = min(len(para), start_idx + len(phrase) + 20)
+                context_snippet = para[context_start:context_end]
+                if context_start > 0:
+                    context_snippet = "..." + context_snippet
+                if context_end < len(para):
+                    context_snippet = context_snippet + "..."
+                return True, phrase, context_snippet
+        return False, None, None
+
+    clean_text = sanitize_text(text)
+    if not clean_text:
+        logger.error("Input text is empty after sanitization.")
+        return text
+
+    capitalized_words = extract_capitalized_words(clean_text)
+    logger.debug(f"Extracted capitalized words from text: {list(capitalized_words.values())}")
+
+    paragraphs = [p.strip() for p in clean_text.split('\n') if p.strip()]
+    final_paraphrased = []
+
+    for idx, para in enumerate(paragraphs):
+        print(f"\n🔹 Paraphrasing Paragraph {idx + 1}/{len(paragraphs)}")
+
+        prompt = (
+            f"Rephrase the following job description paragraph professionally, preserving all key details, tone, and structure. "
+            f"Keep the length approximately the same and avoid repeating the input format:\n{para}"
+        )
+
+        prompt_tokens = tokenizer.encode(prompt, add_special_tokens=True)
+        prompt_token_len = len(prompt_tokens)
+
+        if prompt_token_len > MAX_TOTAL_TOKENS - 200:
+            logger.warning(f"Prompt for paragraph {idx + 1} too long, truncating to fit.")
+            para = " ".join(para.split()[:int((MAX_TOTAL_TOKENS - 200) / 4)])
+            prompt = (
+                f"Rephrase the following job description paragraph professionally, preserving all key details, tone, and structure. "
+                f"Keep the length approximately the same:\n{para}"
+            )
+            prompt_tokens = tokenizer.encode(prompt, add_special_tokens=True)
+            prompt_token_len = len(prompt_tokens)
+
+        available_output_tokens = max(200, MAX_TOTAL_TOKENS - prompt_token_len)
+        target_word_count = len(para.split())
+        tolerance = 0.25
+        min_wc = int(target_word_count * (1 - tolerance))
+        max_wc = int(target_word_count * (1 + tolerance))
+
+        encoding = tokenizer.encode_plus(
+            prompt,
+            return_tensors="pt",
+            truncation=True,
+            max_length=MAX_TOTAL_TOKENS
+        ).to(device)
+
+        best_paraphrase = None
+        best_score = -1
+        best_attempt = ""
+        best_metadata = ""
+
+        for attempt in range(max_attempts):
+            sub_attempt = 0
+            valid_paraphrase_found = False
+
+            while not valid_paraphrase_found and sub_attempt < max_sub_attempts:
+                try:
+                    with torch.no_grad():
+                        output = model.generate(
+                            input_ids=encoding['input_ids'],
+                            attention_mask=encoding['attention_mask'],
+                            max_new_tokens=available_output_tokens,
+                            do_sample=True,
+                            top_k=40,
+                            top_p=0.95,
+                            temperature=0.8 + 0.1 * sub_attempt,
+                            repetition_penalty=1.2,
+                            no_repeat_ngram_size=3,
+                            num_return_sequences=MAX_RETURN_SEQUENCES
+                        )
+
+                    decoded = [tokenizer.decode(seq, skip_special_tokens=True).strip() for seq in output]
+
+                    for option_index, d in enumerate(decoded):
+                        paraphrased = d.replace(prompt, "").strip() if prompt in d else d.strip()
+                        paraphrased = clean_description(paraphrased)
+                        paraphrased = restore_capitalization(paraphrased, capitalized_words)
+
+                        if not paraphrased or len(paraphrased.split()) < 5:
+                            logger.info(f"⛔ Rejected due to empty or too short: \"{paraphrased}\"")
+                            continue
+                        is_banned, banned_phrase, context_snippet = contains_prompt(paraphrased)
+                        if is_banned:
+                            print(f"❌ Rejected due to prompt echo (phrase: '{banned_phrase}' in context: '{context_snippet}' in output: \"{paraphrased}\")")
+                            logger.info(f"❌ Rejected due to prompt echo (phrase: '{banned_phrase}' in context: '{context_snippet}' in output: \"{paraphrased}\")")
+                            continue
+
+                        score, sim, wc = score_paraphrase(para, paraphrased, target_word_count)
+                        first_diff = not paraphrased.lower().startswith(para.lower())
+
+                        print(f"📝 Attempt {attempt + 1}.{sub_attempt + 1}, Option {option_index + 1}")
+                        print(f"↪ Words: {wc}, Sim: {sim:.2f}, Score: {score:.2f}, First different: {first_diff}")
+                        print(f"→ Paraphrased: {paraphrased}\n")
+
+                        is_valid = (
+                            min_wc <= wc <= max_wc
+                            and sim >= (0.65 if target_word_count > 10 else 0.6)
+                            and first_diff
+                            and is_grammatically_correct(paraphrased)
+                        )
+
+                        if is_valid:
+                            print(f"✅ Picked from attempt {attempt + 1}.{sub_attempt + 1}, option {option_index + 1}")
+                            final_paraphrased.append(clean_description(paraphrased))
+                            valid_paraphrase_found = True
+                            break
+
+                        if first_diff and score > best_score:
+                            best_score = score
+                            best_paraphrase = paraphrased
+                            best_attempt = f"{attempt + 1}.{sub_attempt + 1}, option {option_index + 1}"
+                            best_metadata = (
+                                f"↪ Words: {wc}, Sim: {sim:.2f}, Score: {score:.2f}, First different: {first_diff}\n"
+                                f"→ Paraphrased: {paraphrased}"
+                            )
+
+                    if not valid_paraphrase_found:
+                        sub_attempt += 1
+                        time.sleep(0.5 * (2 ** sub_attempt))
+
+                except Exception as e:
+                    logger.error(f"Error during attempt {attempt + 1}, sub-attempt {sub_attempt + 1} for paragraph {idx + 1}: {str(e)}")
+                    sub_attempt += 1
+                    time.sleep(0.5 * (2 ** sub_attempt))
+
+            if valid_paraphrase_found:
+                break
+            time.sleep(1)
+
+        if not valid_paraphrase_found:
+            if best_paraphrase:
+                print(f"✅ Picked fallback from attempt {best_attempt}")
+                print(best_metadata + "\n")
+                final_paraphrased.append(clean_description(best_paraphrase))
+            else:
+                print(f"❌ Paragraph {idx + 1} fallback to original.\n")
+                final_paraphrased.append(para)
+
+    return "\n\n".join(final_paraphrased)
+
 def paraphrase_title_and_description(title, description, index, max_attempts=5):
     try:
         rewritten_title = paraphrase_strict_title(title, max_attempts=max_attempts)
-        rewritten_description = paraphrase_strict_company(description, max_attempts=2)
+        rewritten_description = paraphrase_strict_description(description, max_attempts=2)
         combined = f"{rewritten_title}\n\n{rewritten_description}"
         return combined, rewritten_title, rewritten_description
     except Exception as e:
@@ -1484,6 +1010,9 @@ def scrape_job_details(job_url):
         job_title_clean = trimmed_parts[0] if trimmed_parts else job_title
         company_name = trimmed_parts[1] if len(trimmed_parts) > 1 else None
         if not company_name:
+            logo_elem = soup.select_one('div.company-logo > img')
+            company_name = logo_elem.get('alt', '').strip() if logo_elem and logo_elem.get('alt') else None
+        if not company_name:
             company_name_elem = soup.select_one('#wrap-comp-jobs > div.company-jobs > h1') or soup.select_one('h1.company-name') or soup.select_one('div.company-info > h2')
             company_name = company_name_elem.text.replace("Recruitment", "").strip() if company_name_elem else "Unknown Company"
         job_type = soup.select_one('#printable > ul > li:nth-child(1) > span.jkey-info').text.strip() if soup.select_one('#printable > ul > li:nth-child(1) > span.jkey-info') else ""
@@ -1604,6 +1133,55 @@ def scrape_job_details(job_url):
     except RequestException as e:
         logger.error(f"Error scraping job details from {job_url}: {str(e)}")
         return None, None
+
+def load_southafrica_processed_job_ids():
+    if not os.path.exists(PROCESSED_IDS_FILE):
+        logger.info(f"{PROCESSED_IDS_FILE} does not exist. Initializing empty sets.")
+        return set(), set(), set()
+    try:
+        df = pd.read_csv(PROCESSED_IDS_FILE)
+        required_columns = ['Job ID', 'Job URL', 'Company Name', 'URL Page', 'Job Number']
+        for col in required_columns:
+            if col not in df.columns:
+                df[col] = ''
+        job_ids = set(df['Job ID'].fillna('').astype(str).tolist())
+        job_urls = set(df['Job URL'].fillna('').astype(str).tolist())
+        company_names = set(df['Company Name'].fillna('').astype(str).tolist())
+        logger.info(f"Loaded {len(job_ids)} Job IDs, {len(job_urls)} URLs, and {len(company_names)} companies")
+        return job_ids, job_urls, company_names
+    except Exception as e:
+        logger.error(f"Error reading {PROCESSED_IDS_FILE}: {str(e)}")
+        print(f"Error reading {PROCESSED_IDS_FILE}: {str(e)}. Using empty sets.")
+        return set(), set(), set()
+
+def save_processed_job_id(job_id, job_url, company_name, url_page, job_number):
+    try:
+        job_id = str(job_id)
+        job_url = sanitize_text(str(job_url), is_url=True)
+        company_name = sanitize_text(str(company_name))
+        url_page = str(url_page)
+        job_number = str(job_number)
+        new_row = pd.DataFrame({
+            'Job ID': [job_id],
+            'Job URL': [job_url],
+            'Company Name': [company_name],
+            'URL Page': [url_page],
+            'Job Number': [job_number]
+        })
+        if os.path.exists(PROCESSED_IDS_FILE):
+            df = pd.read_csv(PROCESSED_IDS_FILE)
+            if not df.empty and job_id not in df['Job ID'].astype(str).values:
+                df = pd.concat([df, new_row], ignore_index=True)
+                df.to_csv(PROCESSED_IDS_FILE, index=False)
+            elif df.empty:
+                new_row.to_csv(PROCESSED_IDS_FILE, index=False)
+        else:
+            new_row.to_csv(PROCESSED_IDS_FILE, index=False)
+        logger.info(f"Saved Job ID {job_id}, URL {job_url}, Company {company_name}, Page {url_page}, Job Number {job_number}")
+    except Exception as e:
+        logger.error(f"Error saving Job ID {job_id}: {str(e)}")
+        print(f"Error saving Job ID {job_id}: {str(e)}")
+        raise
 
 def crawl_and_process():
     southafrica_processed_job_ids, processed_job_urls, processed_companies = load_southafrica_processed_job_ids()
