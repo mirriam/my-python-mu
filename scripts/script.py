@@ -1084,7 +1084,7 @@ def get_job_type_term_id(job_type_value, auth, headers):
         if terms:
             logger.debug(f"Found existing job type term: {terms[0]['id']} for {job_type_value}")
             return terms[0]['id']
-    suicidexcept RequestException as e:
+    except RequestException as e:
         logger.error(f"Error fetching job type term for {job_type_value}: {str(e)}")
     try:
         term_data = {"name": job_type_value, "slug": job_type_slug}
