@@ -76,7 +76,7 @@ jobs:
       - name: Upload processed IDs
         uses: actions/upload-artifact@v4
         with:
-          name: processed-ids-${{ github.run_id }}
+          name: processed-ids
           path: southafrica_processed_job_ids.csv
           retention-days: 7
 
