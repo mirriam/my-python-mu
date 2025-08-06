@@ -1,4 +1,5 @@
 name: Run Python Script
+
 on:
   push:
     branches:
@@ -6,45 +7,83 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '0 */6 * * *' # Every 6 hours (00:00, 06:00, 12:00, 18:00 UTC)
+
 jobs:
   run-python:
     runs-on: ubuntu-latest
-    timeout-minutes: 360 # Max 6 hours
+    timeout-minutes: 120 # 2 hours to avoid exceeding run time
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      - name: Create requirements.txt
+        run: |
+          cat > requirements.txt << EOF
+          pandas
+          requests
+          beautifulsoup4
+          nltk
+          transformers
+          sentence-transformers
+          language_tool_python
+          torch
+          huggingface_hub
+          EOF
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
       - name: Install NLTK data
         run: python -c "import nltk; nltk.download('punkt_tab'); nltk.download('averaged_perceptron_tagger')"
+
       - name: Install Java for LanguageTool
         run: sudo apt-get update && sudo apt-get install -y openjdk-11-jre
-      - name: Clear Hugging Face cache
-        run: rm -rf ~/.cache/huggingface/hub
+
+      - name: Cache Hugging Face models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: huggingface-models-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            huggingface-models-
+
       - name: Download previous processed IDs
         uses: actions/download-artifact@v4
         with:
           name: processed-ids
           path: .
         continue-on-error: true
+
+      - name: Initialize processed IDs file
+        run: |
+          if [ ! -f southafrica_processed_job_ids.csv ]; then
+            echo "Job ID,Job URL,Company Name,URL Page,Job Number" > southafrica_processed_job_ids.csv
+          fi
+
       - name: Run script
-        run: python scripts/script.py
+        run: python script.py
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
       - name: Upload processed IDs
         uses: actions/upload-artifact@v4
         with:
-          name: processed-ids
+          name: processed-ids-${{ github.run_id }}
           path: southafrica_processed_job_ids.csv
+          retention-days: 7
+
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: debug-logs
+          name: debug-logs-${{ github.run_id }}
           path: debug.log
+          retention-days: 7
