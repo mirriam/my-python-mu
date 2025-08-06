@@ -1585,19 +1585,26 @@ def crawl_and_process():
             continue
 
 def main():
-    cycle_count = 0
-    while True:
-        cycle_count += 1
-        print(f"\nStarting cycle {cycle_count} of job processing at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    # Initialize models once
+    initialize_models()
+    
+    max_retries = 3
+    for attempt in range(max_retries):
         try:
+            print(f"\nStarting job processing at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             crawl_and_process()
-            print(f"Completed cycle {cycle_count}. Waiting 2 hours before restarting...")
-            time.sleep(2 * 60 * 60)  # Wait 2 hours (7200 seconds)
+            print("Completed job processing.")
+            break
         except Exception as e:
-            logger.error(f"Error in cycle {cycle_count}: {str(e)}")
-            print(f"Error in cycle {cycle_count}: {str(e)}")
-            print("Retrying after 2 hours...")
-            time.sleep(2 * 60 * 60)  # Wait 2 hours before retrying
+            logger.error(f"Error in processing attempt {attempt + 1}: {str(e)}")
+            print(f"Error in processing attempt {attempt + 1}: {str(e)}")
+            if attempt < max_retries - 1:
+                print(f"Retrying after {2 ** attempt} seconds...")
+                time.sleep(2 ** attempt)
+            else:
+                logger.error("Max retries reached. Exiting.")
+                print("Max retries reached. Exiting.")
+                raise
 
 if __name__ == "__main__":
     main()
