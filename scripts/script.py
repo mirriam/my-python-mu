@@ -1651,12 +1651,15 @@ def crawl_and_process():
                 if not job_description or pd.isna(job_description):
                     print(f"Skipping job {job_number}: Empty or invalid job description.")
                     continue
-                if company_name not in processed_companies and company_name != "Unknown Company":
-                    company_post_id, company_post_url = save_company_to_wordpress(index, company_data)
-                    if company_post_id:
-                        print(f"Successfully posted company {company_name} to WordPress. Post ID: {company_post_id}, URL: {company_post_url}")
-                    else:
-                        print(f"Failed to post company {company_name} to WordPress.")
+                if company_name == "Unknown Company" or company_name in processed_companies:
+                    print(f"Skipping job {job_number}: Company {company_name} is either unknown or already processed.")
+                    save_processed_job_id(job_id, job_url, company_name, i, job_number)
+                    continue
+                company_post_id, company_post_url = save_company_to_wordpress(index, company_data)
+                if company_post_id:
+                    print(f"Successfully posted company {company_name} to WordPress. Post ID: {company_post_id}, URL: {company_post_url}")
+                else:
+                    print(f"Failed to post company {company_name} to WordPress.")
                 extracted_title = extract_job_title(job_title)
                 print(f"\nParaphrasing Job Title and Description for Job ID: {job_id}")
                 print("-" * 30)
