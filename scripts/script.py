@@ -54,8 +54,6 @@ except LookupError:
 tool = language_tool_python.LanguageTool('en-US')
 
 
-
-
 # Initialize model and tokenizer
 device = torch.device("cpu")  # Always CPU
 model_name = "google/flan-t5-large"
@@ -75,7 +73,7 @@ WP_URL = "https://southafrica.mimusjobs.com/wp-json/wp/v2/job-listings"
 WP_COMPANY_URL = "https://southafrica.mimusjobs.com/wp-json/wp/v2/company"
 WP_MEDIA_URL = "https://southafrica.mimusjobs.com/wp-json/wp/v2/media"
 WP_USERNAME = "admin"
-WP_APP_PASSWORD = "Xljs I1VY 7XL0 F45N 3Wsv 5qcv"
+WP_APP_PASSWORD = "GFrL htgc j7a1 pjin xUqS 1FJU"
 PROCESSED_IDS_FILE = "southafrica_processed_job_ids.csv"
 LAST_PAGE_FILE = "last_processed_page.txt"
 HEADERS = {
@@ -896,22 +894,8 @@ def save_last_processed_page(page_number):
         print(f"Error saving last processed page {page_number}: {str(e)}")
 
 def load_last_processed_page():
-    if not os.path.exists(LAST_PAGE_FILE):
-        logger.info(f"{LAST_PAGE_FILE} does not exist. Defaulting to page 2977.")
-        return 2977
-    try:
-        with open(LAST_PAGE_FILE, 'r') as f:
-            page = f.read().strip()
-            page_number = int(page)
-            if page_number < 1 or page_number > 2977:
-                logger.warning(f"Invalid page number {page_number} in {LAST_PAGE_FILE}. Defaulting to 2977.")
-                return 2977
-            logger.info(f"Loaded last processed page: {page_number} from {LAST_PAGE_FILE}")
-            return page_number
-    except (ValueError, Exception) as e:
-        logger.error(f"Error reading {LAST_PAGE_FILE}: {str(e)}. Defaulting to 2977.")
-        print(f"Error reading {LAST_PAGE_FILE}: {str(e)}. Defaulting to 2977.")
-        return 2977
+    logger.info("Starting from page 5 as per configuration.")
+    return 1
 
 def validate_application_method(value, is_email=False):
     if not value:
@@ -1452,63 +1436,62 @@ def scrape_job_details(job_url):
                 excluded_domains = ['mysalaryscale.com', 'myjobmag.co.za', 'linkedin.com', 'twitter.com', 'facebook.com']
                 if company_website:
                     company_website = clean_application_url(company_website)
-                    if any(domain in company_website for domain in excluded_domains) or not validate_application_method(company_website):
+                    if any(domain in company_website.lower() for domain in excluded_domains):
                         company_website = ""
+                    elif validate_application_method(company_website):
+                        company_data['company_website'] = company_website
+                    else:
+                        company_website = ""
+                else:
+                    company_website = ""
                 company_data['company_website'] = company_website
                 company_data['company_address'] = company_soup.select_one('#wrap-comp-jobs > div.company-jobs > div.company-details-right > ul > li:nth-child(5) > span.comp-info-desc').text.strip() if company_soup.select_one('#wrap-comp-jobs > div.company-jobs > div.company-details-right > ul > li:nth-child(5) > span.comp-info-desc') else ""
-                company_data['company_details'] = company_soup.select_one('#wrap-comp-jobs > div.company-jobs > div.company-details-left').text.strip() if company_soup.select_one('#wrap-comp-jobs > div.company-jobs > div.company-details-left') else ""
-            except RequestException as e:
-                logger.error(f"Error scraping company details from {company_urls[0]}: {str(e)}")
+                company_data['company_details'] = company_soup.select_one('#wrap-comp-jobs > div.company-jobs > div.mag-b.fl-r.ts-13.tc-b6.bm-b-35').text.strip() if company_soup.select_one('#wrap-comp-jobs > div.company-jobs > div.mag-b.fl-r.ts-13.tc-b6.bm-b-35') else ""
+            except Exception as e:
+                print(f"Error fetching company details from {company_urls[0]}: {str(e)}")
+                logger.error(f"Error fetching company details from {company_urls[0]}: {str(e)}")
                 company_data = {
                     'company_name': company_name,
                     'company_logo': [],
-                    'company_industry': '',
-                    'company_founded': '',
-                    'company_type': '',
-                    'company_website': '',
-                    'company_address': '',
-                    'company_details': ''
+                    'company_industry': "",
+                    'company_founded': "",
+                    'company_type': "",
+                    'company_website': "",
+                    'company_address': "",
+                    'company_details': ""
                 }
-        else:
-            company_data = {
-                'company_name': company_name,
-                'company_logo': [],
-                'company_industry': '',
-                'company_founded': '',
-                'company_type': '',
-                'company_website': '',
-                'company_address': '',
-                'company_details': ''
-            }
-        job_data = {
-            "Job Title": sanitize_text(job_title_clean),
-            "Company": company_name,
-            "Job Type": job_type,
-            "Location": job_locations,
-            "Qualifications": job_qualifications,
-            "Experience": job_experiences,
-            "Field": job_fields,
-            "Date Posted": date_posted_str,
-            "Deadline": deadline,
-            "Job Description": sanitize_text(job_description),
-            "Application": application,
-            "Company Logo": company_data.get('company_logo', [''])[0],
-            "Company Website": company_data.get('company_website', ''),
-            "Company Details": company_data.get('company_details', ''),
-            "Job URL": job_url,
-            "Job ID": hashlib.md5(job_url.encode()).hexdigest()
-        }
-        logger.debug(f"Scraped job details: {job_data}")
-        logger.debug(f"Scraped company details: {company_data}")
-        return job_data, company_data
-    except RequestException as e:
+        job_id = hashlib.md5(job_url.encode()).hexdigest()[:16]
+        return {
+            'Job ID': job_id,
+            'Job Title': job_title_clean,
+            'Job Description': job_description,
+            'Job Type': job_type,
+            'Job Qualifications': job_qualifications,
+            'Job Experiences': job_experiences,
+            'Location': job_locations,
+            'Job Fields': job_fields,
+            'Date Posted': date_posted_str,
+            'Deadline': deadline,
+            'Application': application,
+            'Company': company_data.get('company_name', company_name),
+            'Company Logo': ', '.join(company_data.get('company_logo', [])),
+            'Company Industry': company_data.get('company_industry', ''),
+            'Company Founded': company_data.get('company_founded', ''),
+            'Company Type': company_data.get('company_type', ''),
+            'Company Website': company_data.get('company_website', ''),
+            'Company Address': company_data.get('company_address', ''),
+            'Company Details': company_data.get('company_details', ''),
+            'Job URL': job_url,
+            'New Date String': new_date_string
+        }, company_data
+    except Exception as e:
+        print(f"Error scraping job details from {job_url}: {str(e)}")
         logger.error(f"Error scraping job details from {job_url}: {str(e)}")
         return None, None
 
 def crawl_and_process():
     southafrica_processed_job_ids, processed_job_urls, processed_companies = load_southafrica_processed_job_ids()
     print(f"Loaded {len(southafrica_processed_job_ids)} previously processed Job IDs, {len(processed_job_urls)} URLs, and {len(processed_companies)} companies")
-    
     # Define the page range to scrape (pages 1 to 5)
     for i in range(1, 6):
         url = f'https://www.myjobmag.co.za/page/{i}'
@@ -1571,7 +1554,6 @@ def crawl_and_process():
                 post_id, post_url = save_article_to_wordpress(index, job_data, rewritten_title, rewritten_description, application)
                 if post_id:
                     print(f"Successfully posted job {job_number} (Job ID: {job_id}, URL: {job_url}) to WordPress. Post ID: {post_id}, URL: {post_url}")
-                    save_processed_job_id(job_id, job_url, company_name, i, job_number)
                 else:
                     print(f"Failed to post job {job_number} (Job ID: {job_id}, URL: {job_url}) to WordPress.")
                     save_processed_job_id(job_id, job_url, company_name, i, job_number)
@@ -1579,32 +1561,24 @@ def crawl_and_process():
                 if job_number % 10 == 0:
                     logger.info("Pausing for 30 seconds to avoid server overload")
                     time.sleep(30)
+            save_last_processed_page(i)
         except Exception as e:
             print(f"Error crawling page {url}: {str(e)}")
             logger.error(f"Error crawling page {url}: {str(e)}")
+            save_last_processed_page(i)
             continue
+    
 
 def main():
-    # Initialize models once
-    #initialize_models()
-    
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            print(f"\nStarting job processing at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            crawl_and_process()
-            print("Completed job processing.")
-            break
-        except Exception as e:
-            logger.error(f"Error in processing attempt {attempt + 1}: {str(e)}")
-            print(f"Error in processing attempt {attempt + 1}: {str(e)}")
-            if attempt < max_retries - 1:
-                print(f"Retrying after {2 ** attempt} seconds...")
-                time.sleep(2 ** attempt)
-            else:
-                logger.error("Max retries reached. Exiting.")
-                print("Max retries reached. Exiting.")
-                raise
+    max_cycles = 10
+    cycle_count = 0
+    while cycle_count < max_cycles:
+        print(f"\nStarting cycle {cycle_count + 1} of job processing...")
+        crawl_and_process()
+        cycle_count += 1
+        print(f"\nAll jobs processed for cycle {cycle_count}. Waiting 5 minutes before starting the next cycle...")
+        time.sleep(7200)  # 2 hours in seconds
+    print("Reached maximum cycles. Exiting.")
 
 if __name__ == "__main__":
     main()
