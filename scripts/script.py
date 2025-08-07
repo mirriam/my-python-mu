@@ -15,12 +15,10 @@ from urllib3.util.retry import Retry
 import warnings
 import logging
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
-from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 from sentence_transformers import SentenceTransformer, util
 import language_tool_python
 import torch
-from huggingface_hub import login
 
 # Set CUDA_LAUNCH_BLOCKING for debugging
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
@@ -53,12 +51,10 @@ except LookupError:
 # Initialize language tool
 tool = language_tool_python.LanguageTool('en-US')
 
-
 # Initialize model and tokenizer
 device = torch.device("cpu")  # Always CPU
 model_name = "google/flan-t5-large"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
-#model = AutoModelForCausalLM.from_pretrained(model_name)
 model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
 model.eval()
 model.to(device)
@@ -89,8 +85,8 @@ JOB_TYPE_MAPPING = {
     "Volunteer": "volunteer"
 }
 
+# Existing utility functions (sanitize_text, clean_description, etc.) remain unchanged
 def sanitize_text(text, is_url=False, is_email=False):
-    """Sanitize input text by removing unwanted characters and normalizing."""
     if not isinstance(text, str):
         text = str(text)
     text = text.strip()
@@ -111,7 +107,6 @@ def sanitize_text(text, is_url=False, is_email=False):
     return text
 
 def clean_description(text):
-    """Clean paraphrased text using LanguageTool for grammar and style."""
     try:
         matches = tool.check(text)
         corrected_text = language_tool_python.utils.correct(text, matches)
@@ -121,7 +116,6 @@ def clean_description(text):
         return text
 
 def is_good_paraphrase(original: str, candidate: str) -> float:
-    """Calculate cosine similarity between original and paraphrased text."""
     try:
         embeddings = similarity_model.encode([original, candidate], convert_to_tensor=True)
         sim_score = util.pytorch_cos_sim(embeddings[0], embeddings[1]).item()
@@ -131,12 +125,10 @@ def is_good_paraphrase(original: str, candidate: str) -> float:
         return 0.0
 
 def is_grammatically_correct(text):
-    """Check if text is grammatically correct with minimal issues."""
     matches = tool.check(text)
     return len(matches) < 3
 
 def extract_nouns(text):
-    """Extract nouns (NN, NNS, NNP, NNPS) from text using NLTK POS tagging."""
     try:
         tokens = nltk.word_tokenize(text)
         tagged = nltk.pos_tag(tokens)
@@ -147,31 +139,24 @@ def extract_nouns(text):
         return []
 
 def contains_nouns(paraphrase, required_nouns):
-    """Check if the paraphrase contains all required nouns."""
     if not required_nouns:
         return True
     paraphrase_lower = paraphrase.lower()
     return all(noun.lower() in paraphrase_lower for noun in required_nouns)
 
-
 def extract_capitalized_words(text):
-    """Extract words with specific capitalization (e.g., proper nouns, acronyms) from the input text."""
-    import re
-    words = re.findall(r'\b[A-Z][a-zA-Z]*\b', text)  # Matches words starting with a capital letter
-    # Filter out common words that shouldn't be enforced (e.g., sentence starters may need adjustment)
-    return {word: word for word in words if len(word) > 1}  # Dictionary to map lowercase to original case
+    words = re.findall(r'\b[A-Z][a-zA-Z]*\b', text)
+    return {word: word for word in words if len(word) > 1}
 
 def restore_capitalization(paraphrased, capitalized_words):
-    """Restore original capitalization of specified words in the paraphrased text."""
     paraphrased_lower = paraphrased.lower()
     result = paraphrased
     for lower_word, orig_word in capitalized_words.items():
-        # Replace case-insensitive occurrences with the original capitalized form
         pattern = r'\b' + re.escape(lower_word) + r'\b'
         result = re.sub(pattern, orig_word, result, flags=re.IGNORECASE)
     return result
 
-
+# Existing paraphrasing functions (paraphrase_strict_title, paraphrase_strict_company, etc.) remain unchanged
 def paraphrase_strict_title(title, max_attempts=3, max_sub_attempts=2):
     def has_repetitions(text):
         tokens = text.lower().split()
@@ -338,8 +323,6 @@ def paraphrase_strict_title(title, max_attempts=3, max_sub_attempts=2):
 
     print("❌ Fallback to original title.\n")
     return clean_title
-
-
 
 def paraphrase_strict_company(text, max_attempts=2, max_sub_attempts=2):
     def contains_prompt(para):
@@ -882,35 +865,6 @@ def save_processed_job_id(job_id, job_url, company_name, url_page, job_number):
     except Exception as e:
         logger.error(f"Error saving Job ID {job_id}: {str(e)}")
         print(f"Error saving Job ID {job_id}: {str(e)}")
-        raise
-
-def save_processed_job_id(job_id, job_url, company_name, url_page, job_number):
-    try:
-        job_id = str(job_id)
-        job_url = sanitize_text(str(job_url), is_url=True)
-        company_name = sanitize_text(str(company_name))
-        url_page = str(url_page)
-        job_number = str(job_number)
-        new_row = pd.DataFrame({
-            'Job ID': [job_id],
-            'Job URL': [job_url],
-            'Company Name': [company_name],
-            'URL Page': [url_page],
-            'Job Number': [job_number]
-        })
-        if os.path.exists(PROCESSED_IDS_FILE):
-            df = pd.read_csv(PROCESSED_IDS_FILE)
-            if not df.empty and job_id not in df['Job ID'].astype(str).values:
-                df = pd.concat([df, new_row], ignore_index=True)
-                df.to_csv(PROCESSED_IDS_FILE, index=False)
-            elif df.empty:
-                new_row.to_csv(PROCESSED_IDS_FILE, index=False)
-        else:
-            new_row.to_csv(PROCESSED_IDS_FILE, index=False)
-        logger.info(f"Saved Job ID {job_id}, URL {job_url}, Company {company_name}, Page {url_page}, Job Number {job_number} to {PROCESSED_IDS_FILE}")
-    except Exception as e:
-        logger.error(f"Error saving Job ID {job_id}: {str(e)}")
-        print(f"Error saving Job ID {job_id}: {str(e)}")
 
 def load_last_processed_page():
     try:
@@ -925,6 +879,15 @@ def load_last_processed_page():
         logger.error(f"Error loading last processed page: {str(e)}")
         print(f"Error loading last processed page: {str(e)}. Starting from page 1.")
         return 1
+
+def save_last_processed_page(page):
+    try:
+        with open(LAST_PAGE_FILE, 'w') as f:
+            f.write(str(page))
+        logger.info(f"Saved last processed page: {page}")
+    except Exception as e:
+        logger.error(f"Error saving last processed page {page}: {str(e)}")
+        print(f"Error saving last processed page {page}: {str(e)}")
 
 def validate_application_method(value, is_email=False):
     if not value:
@@ -1016,27 +979,6 @@ def extract_job_title(job_title):
     logger.debug(f"No pattern matched, using fallback extracted title: {extracted}")
     return extracted
 
-def clean_description(text):
-    """Clean paraphrased text by removing verbose phrases and normalizing."""
-    verbose_phrases = [
-        r'Paraphrased Version',
-        r'Paraphrased Job Description for',
-        r'This paraphrased version maintains the original content while improving clarity and readability\.'
-    ]
-    for phrase in verbose_phrases:
-        text = re.sub(phrase, '', text, flags=re.IGNORECASE).strip()
-    text = re.sub(r'[ \t]+', ' ', text)
-    text = re.sub(r'\*\*', '', text)
-    text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text).strip()
-    text = re.sub(r'[\r\t\f\v]', '', text)
-    try:
-        matches = tool.check(text)
-        corrected_text = language_tool_python.utils.correct(text, matches)
-        return corrected_text
-    except Exception as e:
-        logger.error(f"Error in grammar correction: {str(e)}")
-        return text
-
 def print_word_by_word(text, delay=0.05):
     text = re.sub(r'\*\*', '', text)
     print("\nStep 3: API Response (Word-by-Word)")
@@ -1047,7 +989,7 @@ def print_word_by_word(text, delay=0.05):
         words = para.split()
         for word in words:
             print(f"{word} ", end="", flush=True)
-        time.sleep(delay)
+            time.sleep(delay)
         print('\n')
     return text
 
@@ -1061,14 +1003,12 @@ def paraphrase_title_and_description(title, description, index, max_attempts=5):
     print("\nStep 2: Paraphrasing Title and Description Separately")
     print("-" * 30)
 
-    # Paraphrase the title
     try:
         print(f"Paraphrasing Job Title: {title}")
         paraphrased_title = paraphrase_strict_title(title, max_attempts=max_attempts)
         logger.debug(f"Raw paraphrased title: {paraphrased_title}")
         print(f"Paraphrased Job Title: {paraphrased_title}")
 
-        # Truncate long titles
         words = paraphrased_title.split()
         if len(words) > 30:
             words = words[:30]
@@ -1084,7 +1024,6 @@ def paraphrase_title_and_description(title, description, index, max_attempts=5):
         print(f"Error paraphrasing title: {str(e)}. Falling back to original title.")
         rewritten_title = title
 
-    # Paraphrase the description
     try:
         print(f"Paraphrasing Job Description: {description}")
         paraphrased_description = paraphrase_strict_description(description, max_attempts=max_attempts)
@@ -1184,7 +1123,6 @@ def save_company_to_wordpress(index, company_data):
         print("-" * 30)
         print(f"Original Company Details: {company_details}")
         paraphrased_details = paraphrase_strict_company(company_details, max_attempts=5)
-
         paraphrased_details = re.sub(r'Job Title:\s*[^\n]*\n*', '', paraphrased_details, flags=re.IGNORECASE)
         paraphrased_details = re.sub(r'Job Description:\s*', '', paraphrased_details, flags=re.IGNORECASE)
         sentences = nltk.sent_tokenize(paraphrased_details)
@@ -1298,7 +1236,7 @@ def save_article_to_wordpress(index, job_data, rewritten_title, rewritten_descri
             post = posts[0]
             logger.info(f"Job {index + 1} (Job ID: {job_id}) already exists in WordPress: Post ID {post.get('id')}, URL {post.get('link')}")
             print(f"Skipping job {index + 1}: Already exists in WordPress with Post ID {post.get('id')}, URL {post.get('link')}")
-            save_processed_job_id(job_id, job_url, company_name)
+            save_processed_job_id(job_id, job_url, company_name, job_data.get('URL Page', ''), job_data.get('Job Number', ''))
             return post.get("id"), post.get("link")
     except RequestException as e:
         logger.warning(f"Error checking for existing job {index + 1}: {str(e)}. Proceeding to create new post.")
@@ -1347,7 +1285,7 @@ def save_article_to_wordpress(index, job_data, rewritten_title, rewritten_descri
             print("-" * 30)
             print(f"Job Post ID: {post.get('id')}")
             print(f"Job Post URL: {post.get('link')}")
-            save_processed_job_id(job_id, job_url, company_name)
+            save_processed_job_id(job_id, job_url, company_name, job_data.get('URL Page', ''), job_data.get('Job Number', ''))
             return post.get("id"), post.get("link")
         except RequestException as e:
             logger.error(f"Attempt {attempt + 1} failed for job {index + 1}: {e}, Status: {response.status_code if response else 'None'}, Response: {response.text if response else 'None'}")
@@ -1363,7 +1301,7 @@ def save_article_to_wordpress(index, job_data, rewritten_title, rewritten_descri
                         post = posts[0]
                         logger.info(f"Job {index + 1} (Job ID: {job_id}) was created despite error: Post ID {post.get('id')}, URL {post.get('link')}")
                         print(f"Job {index + 1} was created despite error: Post ID {post.get('id')}, URL {post.get('link')}")
-                        save_processed_job_id(job_id, job_url, company_name)
+                        save_processed_job_id(job_id, job_url, company_name, job_data.get('URL Page', ''), job_data.get('Job Number', ''))
                         return post.get("id"), post.get("link")
             except RequestException as check_e:
                 logger.error(f"Error checking for existing job after failed POST attempt {attempt + 1}: {check_e}")
@@ -1385,233 +1323,286 @@ def add_three_months_to_date(date_str):
         print(f"Invalid date format: {date_str}")
         return None
 
-def scrape_job_details(job_url, index, job_number, i):
+# New scraping functions
+def scrape_jobs():
+    result = []
+    uganda_processed_job_ids, processed_job_urls, processed_companies = load_uganda_processed_job_ids()
+    print(f"Loaded {len(uganda_processed_job_ids)} previously processed Job IDs, {len(processed_job_urls)} URLs, and {len(processed_companies)} companies")
+    
+    start_page = load_last_processed_page()
+    for i in range(start_page, start_page + 2):  # Scrape the first 2 pages
+        url = f'https://jobwebuganda.com/jobs/page/{i}'
+        logger.info(f"Fetching page: {url}")
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=10)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            job_list = soup.select("#titlo > strong > a")
+            urls = ['https://jobwebuganda.com' + a['href'] for a in job_list if a.get('href')]
+            logger.info(f"Collected {len(urls)} job URLs from page {i}: {urls}")
+
+            for index, job_url in enumerate(urls):
+                job_number = index + 1
+                print(f"\nProcessing job {job_number} from page {i}: {job_url}")
+                if job_url in processed_job_urls:
+                    print(f"Skipping job {job_number}: URL {job_url} already processed.")
+                    continue
+                data = scrape_job_details(job_url, index, job_number, i)
+                if data:
+                    result.extend(data)
+                if job_number % 10 == 0:
+                    logger.info("Pausing for 30 seconds to avoid server overload")
+                    time.sleep(30)
+            save_last_processed_page(i)
+        except requests.RequestException as e:
+            logger.error(f"Error fetching page {url}: {e}")
+            print(f"Error fetching page {url}: {e}")
+            save_last_processed_page(i)
+            continue
+    return result
+
+def scrape_job_details(job_url, index, job_number, page):
+    res = []
+    logger.info(f"Scraping job details from: {job_url}")
     try:
         resp = requests.get(job_url, headers=HEADERS, timeout=10)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, 'html.parser')
-        
-        # Job title
-        job_title_elem = soup.select_one('div.section.single > div.section_header > h1')
-        job_title = job_title_elem.get_text(strip=True) if job_title_elem else ""
+
+        job_title = soup.select_one("div.section.single > div.section_header > h1")
+        job_title = job_title.text.strip() if job_title else ""
+        logger.info(f"Job Title: {job_title}")
         parts = job_title.split(" at ")
-        trimmed_parts = [part.strip() for part in parts]
-        job_title_clean = trimmed_parts[0] if trimmed_parts else job_title
-        
-        # Company name
-        company_name = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(2) > a').get_text(strip=True) if soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(2) > a') else "Unknown Company"
-        
-        # Job details
-        job_type = soup.select_one('#topss > span').get_text(strip=True) if soup.select_one('#topss > span') else ""
-        job_qualifications = ""
-        job_experiences = ""
-        job_locations = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(3)').get_text(strip=True) if soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(3)') else "Remote"
-        logger.debug(f"Extracted location: {job_locations}")
-        job_fields = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(4) > a:nth-child(2)').get_text(strip=True) if soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(4) > a:nth-child(2)') else ""
-        job_fields += ", " + soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(4) > a:nth-child(3)').get_text(strip=True) if soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(4) > a:nth-child(3)') else ""
-        
-        # Date posted
-        date_posted_str = ""
-        new_date_string = ""
-        
-        # Deadline
-        deadline = new_date_string if new_date_string else ""
-        
-        # Job description
-        job_description = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > font').get_text(strip=True) if soup.select_one('#mainContent > div.section.single > div:nth-child(2) > font') else ""
-        application_detail = ""
-        job_description = job_description + (f"\n\nApplication Instructions: {application_detail}" if application_detail else "")
-        
-        # Fallback for company name in description
-        if company_name == "Unknown Company" and job_description:
-            company_match = re.search(r'(?:at|for|with)\s+([A-Z][\w\s&-]+)\b', job_description, re.IGNORECASE)
-            company_name = company_match.group(1).strip() if company_match else "Unknown Company"
-        if company_name == "Unknown Company":
-            logger.warning(f"Failed to extract company name for job URL: {job_url}")
-        
-        # Application method
-        application_text = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > font') or soup.select_one('div.job-apply')
-        application_text = application_text.get_text(strip=True) if application_text else ""
-        extracted_email = None
+        job_title_clean = parts[0].strip() if parts else job_title
+
+        company = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(2) > a')
+        company = company.text.strip() if company else "Unknown Company"
+        logger.info(f"Company: {company}")
+
+        location = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(3)')
+        location = location.text.strip() if location else "Remote"
+        logger.info(f"Location: {location}")
+
+        job_type = soup.select_one('#topss > span')
+        job_type = job_type.text.strip() if job_type else "Full-time"
+        logger.info(f"Job Type: {job_type}")
+
+        category1 = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(4) > a:nth-child(2)')
+        category1 = category1.text.strip() if category1 else ""
+        logger.info(f"Category 1: {category1}")
+
+        category2 = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(4) > a:nth-child(3)')
+        category2 = category2.text.strip() if category2 else ""
+        logger.info(f"Category 2: {category2}")
+
+        info = soup.select_one("#topss")
+        info = info.text.strip() if info else ""
+        logger.info(f"Info: {info}")
+
+        separated_info = [item.strip() for item in info.split(':') if item.strip()]
+        logger.info(f"Separated Info: {separated_info}")
+        while len(separated_info) < 4:
+            separated_info.append("")
+        logger.info(f"Padded Separated Info: {separated_info}")
+
+        description = soup.select_one("#mainContent > div.section.single > div:nth-child(2) > font")
+        description = description.text.strip() if description else ""
+        logger.info(f"Description: {description}")
+
+        applink = soup.select("#mainContent > div.section.single > div:nth-child(2) > font > a")
+        application_link = ", ".join([a['href'] for a in applink if a.get('href')])
+        logger.info(f"Application Link: {application_link}")
+
+        if application_link:
+            if application_link.startswith('/'):
+                application_link = 'https://jobwebuganda.com' + application_link
+            application_link = clean_application_url(application_link)
+            if not validate_application_method(application_link):
+                application_link = ""
+                logger.warning(f"Invalid application URL after cleaning: {application_link}")
+
+        application_text = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > font')
+        application_text = application_text.text.strip() if application_text else ""
+        extracted_email = ""
         if application_text:
             email_match = re.search(r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', application_text)
             extracted_email = email_match.group(0) if email_match and validate_application_method(email_match.group(0), is_email=True) else ""
-        
-        applink = soup.select('#mainContent > div.section.single > div:nth-child(2) > font > a')
-        application_url = ', '.join([link['href'] for link in applink if link.has_attr('href')]) if applink else ""
-        if application_url:
-            if application_url.startswith('/'):
-                application_url = 'https://jobwebuganda.com' + application_url
-            application_url = clean_application_url(application_url)
-            if not validate_application_method(application_url):
-                application_url = ""
-                logger.warning(f"Invalid application URL after cleaning: {application_url}")
-        application = application_url if application_url else extracted_email if extracted_email else ""
+
+        application = application_link if application_link else extracted_email
         if not application:
             logger.warning(f"No valid application method extracted for job URL: {job_url}")
-        
-        # Company details
-        company_urls = ['https://jobwebuganda.com' + a.get('href') for a in soup.select('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(2) > a') if a.get('href')]
-        company_data = {}
-        if company_urls:
-            try:
-                company_resp = requests.get(company_urls[0], headers=HEADERS, timeout=10)
-                company_resp.raise_for_status()
-                company_soup = BeautifulSoup(company_resp.text, 'html.parser')
-                company_data['company_name'] = company_soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(2) > a').get_text(strip=True) if company_soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(2) > a') else company_name
-                company_data['company_logo'] = ""
-                company_data['company_industry'] = ""
-                company_data['company_founded'] = ""
-                company_data['company_type'] = ""
-                company_data['company_website'] = ""
-                company_data['company_address'] = ""
-                company_data['company_details'] = ""
-            except Exception as e:
-                print(f"Error fetching company details from {company_urls[0]}: {str(e)}")
-                logger.error(f"Error fetching company details from {company_urls[0]}: {str(e)}")
-                company_data = {
-                    'company_name': company_name,
-                    'company_logo': "",
-                    'company_industry': "",
-                    'company_founded': "",
-                    'company_type': "",
-                    'company_website': "",
-                    'company_address': "",
-                    'company_details': ""
-                }
-        
-        # Separated info
-        info = soup.select_one('#topss').get_text(strip=True) if soup.select_one('#topss') else ""
-        separated_info = [item.strip() for item in info.split(':') if item.strip()]
-        while len(separated_info) < 4:
-            separated_info.append("")
-        
+
         job_id = hashlib.md5(job_url.encode()).hexdigest()[:16]
+        job_fields = f"{category1}, {category2}".strip(", ")
+
         job_data = {
             'Job ID': job_id,
             'Job Title': job_title_clean,
-            'Job Description': job_description,
+            'Job Description': description,
             'Job Type': job_type,
-            'Job Qualifications': job_qualifications,
-            'Job Experiences': job_experiences,
-            'Location': job_locations,
+            'Job Qualifications': "",
+            'Job Experiences': "",
+            'Location': location,
             'Job Fields': job_fields,
-            'Date Posted': date_posted_str,
-            'Deadline': deadline,
+            'Date Posted': "",
+            'Deadline': "",
             'Application': application,
-            'Company': company_data.get('company_name', company_name),
-            'Company Logo': company_data.get('company_logo', ''),
-            'Company Industry': company_data.get('company_industry', ''),
-            'Company Founded': company_data.get('company_founded', ''),
-            'Company Type': company_data.get('company_type', ''),
-            'Company Website': company_data.get('company_website', ''),
-            'Company Address': company_data.get('company_address', ''),
-            'Company Details': company_data.get('company_details', ''),
+            'Company': company,
+            'Company Logo': "",
+            'Company Industry': "",
+            'Company Founded': "",
+            'Company Type': "",
+            'Company Website': "",
+            'Company Address': "",
+            'Company Details': "",
             'Job URL': job_url,
-            'New Date String': new_date_string,
+            'New Date String': "",
             'Separated Info Company': separated_info[0],
             'Separated Info Location': separated_info[1],
             'Separated Info State': separated_info[2],
-            'Separated Info Job Type': separated_info[3]
+            'Separated Info Job Type': separated_info[3],
+            'URL Page': str(page),
+            'Job Number': str(job_number)
         }
 
-        # Paraphrase and post
+        company_data = {
+            'company_name': company,
+            'company_logo': "",
+            'company_industry': "",
+            'company_founded': "",
+            'company_type': "",
+            'company_website': "",
+            'company_address': "",
+            'company_details': ""
+        }
+
         extracted_title = extract_job_title(job_title_clean)
         print(f"\nParaphrasing Job Title and Description for Job ID: {job_id}")
         print("-" * 30)
         print(f"Extracted Job Title: {extracted_title}")
         combined_paraphrased, rewritten_title, rewritten_description = paraphrase_title_and_description(
             extracted_title,
-            job_description,
+            description,
             index,
             max_attempts=5
         )
-        company_name = job_data.get("Company", "Unknown Company")
-        processed_companies = load_uganda_processed_job_ids()[2]  # Get company names
-        if company_name not in processed_companies and company_name != "Unknown Company":
+
+        processed_companies = load_uganda_processed_job_ids()[2]
+        if company not in processed_companies and company != "Unknown Company":
             company_post_id, company_post_url = save_company_to_wordpress(index, company_data)
             if company_post_id:
-                print(f"Successfully posted company {company_name} to WordPress. Post ID: {company_post_id}, URL: {company_post_url}")
-                processed_companies.add(company_name)
+                print(f"Successfully posted company {company} to WordPress. Post ID: {company_post_id}, URL: {company_post_url}")
+                processed_companies.add(company)
             else:
-                print(f"Failed to post company {company_name} to WordPress.")
+                print(f"Failed to post company {company} to WordPress.")
+
         post_id, post_url = save_article_to_wordpress(index, job_data, rewritten_title, rewritten_description, application)
         if post_id:
             print(f"Successfully posted job {job_number} (Job ID: {job_id}, URL: {job_url}) to WordPress. Post ID: {post_id}, URL: {post_url}")
-            save_processed_job_id(job_id, job_url, company_name, i, job_number)
+            save_processed_job_id(job_id, job_url, company, page, job_number)
         else:
             print(f"Failed to post job {job_number} (Job ID: {job_id}, URL: {job_url}) to WordPress.")
-            save_processed_job_id(job_id, job_url, company_name, i, job_number)
-        
-        return job_data, company_data
-    except Exception as e:
-        print(f"Error scraping job details from {job_url}: {str(e)}")
-        logger.error(f"Error scraping job details from {job_url}: {str(e)}")
-        return None, None
+            save_processed_job_id(job_id, job_url, company, page, job_number)
 
-def crawl_and_process():
-    uganda_processed_job_ids, processed_job_urls, processed_companies = load_uganda_processed_job_ids()
-    print(f"Loaded {len(uganda_processed_job_ids)} previously processed Job IDs, {len(processed_job_urls)} URLs, and {len(processed_companies)} companies")
-    
-    result = []
-    start_page = load_last_processed_page()
-    for i in range(start_page, start_page + 2):
-        url = f'https://jobwebuganda.com/jobs/page/{i}'
-        try:
-            resp = requests.get(url, headers=HEADERS, timeout=10)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            
-            # Find job links
-            job_list = soup.select('#titlo > strong > a')
-            job_links = ['https://jobwebuganda.com' + a['href'] for a in job_list if a.has_attr('href')]
-            print(f"Collected {len(job_links)} job URLs from page {i}")
-            
-            # Process each job URL
-            for index, job_url in enumerate(job_links):
-                job_number = index + 1
-                print(f"\nProcessing job {job_number} from page {i}: {job_url}")
-                if job_url in processed_job_urls:
-                    print(f"Skipping job {job_number}: URL {job_url} already processed.")
-                    continue
-                
-                job_data, company_data = scrape_job_details(job_url, index, job_number, i)
-                if not job_data or not company_data:
-                    print(f"Failed to scrape job details from {job_url}")
-                    continue
-                
-                job_data['URL Page'] = str(i)
-                job_data['Job Number'] = str(job_number)
-                print(f"\nRaw Scraped Data for Job {job_number} (Job ID: {job_data.get('Job ID', '')})")
-                print("-" * 50)
-                for key, value in job_data.items():
-                    print(f"{key}: {value}")
-                print("-" * 50)
-                
-                result.append(job_data)
-                
-                if job_number % 10 == 0:
-                    logger.info("Pausing for 30 seconds to avoid server overload")
-                    time.sleep(30)
-            save_last_processed_page(i)
-        except requests.RequestException as e:
-            print(f"Error fetching page {url}: {str(e)}")
-            logger.error(f"Error fetching page {url}: {str(e)}")
-            save_last_processed_page(i)
-            continue
-    
-    return result
+        res.append([job_data, company_data])
+        logger.info(f"Appended job data for Job ID {job_id}")
+
+        return res
+    except requests.RequestException as e:
+        logger.error(f"Error scraping job details from {job_url}: {e}")
+        print(f"Error scraping job details from {job_url}: {str(e)}")
+        return None
 
 def main():
     max_cycles = 10
     cycle_count = 0
     while cycle_count < max_cycles:
         print(f"\nStarting cycle {cycle_count + 1} of job processing...")
-        crawl_and_process()
+        jobs = scrape_jobs()
+        logger.info(f"Total jobs scraped in cycle {cycle_count + 1}: {len(jobs)}")
+        
+        if not jobs:
+            logger.info(f"No jobs found in cycle {cycle_count + 1}. Moving to next cycle.")
+            print(f"No jobs found in cycle {cycle_count + 1}. Moving to next cycle.")
+            cycle_count += 1
+            time.sleep(60)  # Wait before next cycle to avoid overloading
+            continue
+
+        for index, job in enumerate(jobs):
+            try:
+                job_data, company_data = job
+                job_id = job_data.get('Job ID', '')
+                job_url = job_data.get('Job URL', '')
+                company_name = job_data.get('Company', 'Unknown Company')
+                logger.info(f"Processing job {index + 1} (Job ID: {job_id}, URL: {job_url})")
+
+                # Extract and paraphrase title and description
+                job_title = extract_job_title(job_data.get('Job Title', ''))
+                job_description = job_data.get('Job Description', '')
+                application = job_data.get('Application', '')
+
+                print(f"\nParaphrasing Job Title and Description for Job ID: {job_id}")
+                combined_paraphrased, rewritten_title, rewritten_description = paraphrase_title_and_description(
+                    job_title,
+                    job_description,
+                    index,
+                    max_attempts=5
+                )
+
+                # Save company to WordPress if not already processed
+                processed_companies = load_uganda_processed_job_ids()[2]
+                if company_name not in processed_companies and company_name != "Unknown Company":
+                    company_post_id, company_post_url = save_company_to_wordpress(index, company_data)
+                    if company_post_id:
+                        logger.info(f"Posted company {company_name} to WordPress. Post ID: {company_post_id}, URL: {company_post_url}")
+                        print(f"Posted company {company_name} to WordPress. Post ID: {company_post_id}, URL: {company_post_url}")
+                    else:
+                        logger.warning(f"Failed to post company {company_name} to WordPress.")
+                        print(f"Failed to post company {company_name} to WordPress.")
+
+                # Save job to WordPress
+                post_id, post_url = save_article_to_wordpress(
+                    index,
+                    job_data,
+                    rewritten_title,
+                    rewritten_description,
+                    application
+                )
+
+                if post_id:
+                    logger.info(f"Posted job {index + 1} (Job ID: {job_id}) to WordPress. Post ID: {post_id}, URL: {post_url}")
+                    print(f"Posted job {index + 1} (Job ID: {job_id}) to WordPress. Post ID: {post_id}, URL: {post_url}")
+                else:
+                    logger.error(f"Failed to post job {index + 1} (Job ID: {job_id}) to WordPress.")
+                    print(f"Failed to post job {index + 1} (Job ID: {job_id}) to WordPress.")
+
+                # Save processed job ID
+                save_processed_job_id(
+                    job_id,
+                    job_url,
+                    company_name,
+                    job_data.get('URL Page', ''),
+                    job_data.get('Job Number', '')
+                )
+
+                # Pause to avoid server overload
+                if (index + 1) % 5 == 0:
+                    logger.info("Pausing for 30 seconds after processing 5 jobs.")
+                    print("Pausing for 30 seconds after processing 5 jobs.")
+                    time.sleep(30)
+
+            except Exception as e:
+                logger.error(f"Error processing job {index + 1} (Job ID: {job_id}): {str(e)}")
+                print(f"Error processing job {index + 1} (Job ID: {job_id}): {str(e)}")
+                continue
+
         cycle_count += 1
-        print(f"\nAll jobs processed for cycle {cycle_count}. Waiting 5 minutes before starting the next cycle...")
-        time.sleep(300)  # 5 minutes in seconds
-    print("Reached maximum cycles. Exiting.")
+        logger.info(f"Completed cycle {cycle_count}. Waiting 60 seconds before next cycle.")
+        print(f"Completed cycle {cycle_count}. Waiting 60 seconds before next cycle.")
+        time.sleep(60)  # Wait before starting next cycle
+
+    logger.info("Completed all processing cycles.")
+    print("Completed all processing cycles.")
 
 if __name__ == "__main__":
     main()
