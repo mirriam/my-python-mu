@@ -1325,30 +1325,54 @@ def add_three_months_to_date(date_str):
 
 
 
-def scrape_job_details(job_url, index, job_number, page):
+def scrape_jobs():
+    result = []
+    for i in range(1, 3):  # Scrape the first 2 pages
+        url = f'https://jobwebuganda.com/jobs/page/{i}'
+        logger.info(f"Fetching page: {url}")
+        try:
+            resp = requests.get(url, headers=headers)
+            resp.raise_for_status()  # Raise exception for bad status codes
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            job_list = soup.select("#titlo > strong > a")
+            urls = [a['href'] for a in job_list if a.get('href')]
+
+            # Log collected URLs
+            logger.info(f"Collected URLs on page {i}: {urls}")
+
+            # Iterate over each job URL and scrape job details
+            for job_url in urls:
+                data = scrape_job_details(job_url)
+                if data:
+                    result.extend(data)
+        except requests.RequestException as e:
+            logger.error(f"Error fetching page {url}: {e}")
+    
+    return result
+
+def scrape_job_details(job_url):
     res = []
     logger.info(f"Scraping job details from: {job_url}")
     try:
-        resp = requests.get(job_url, headers=HEADERS, timeout=10)
-        resp.raise_for_status()
+        resp = requests.get(job_url, headers=headers)
+        resp.raise_for_status()  # Raise exception for bad status codes
         soup = BeautifulSoup(resp.text, 'html.parser')
 
+        # Scrape individual job details
         job_title = soup.select_one("div.section.single > div.section_header > h1")
         job_title = job_title.text.strip() if job_title else ""
         logger.info(f"Job Title: {job_title}")
-        parts = job_title.split(" at ")
-        job_title_clean = parts[0].strip() if parts else job_title
 
         company = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(2) > a')
-        company = company.text.strip() if company else "Unknown Company"
+        company = company.text.strip() if company else ""
         logger.info(f"Company: {company}")
 
         location = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(3)')
-        location = location.text.strip() if location else "Remote"
+        location = location.text.strip() if location else ""
         logger.info(f"Location: {location}")
 
         job_type = soup.select_one('#topss > span')
-        job_type = job_type.text.strip() if job_type else "Full-time"
+        job_type = job_type.text.strip() if job_type else ""
         logger.info(f"Job Type: {job_type}")
 
         category1 = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(4) > a:nth-child(2)')
@@ -1363,8 +1387,11 @@ def scrape_job_details(job_url, index, job_number, page):
         info = info.text.strip() if info else ""
         logger.info(f"Info: {info}")
 
+        # Separate the `info` text into columns based on the ":" symbol
         separated_info = [item.strip() for item in info.split(':') if item.strip()]
         logger.info(f"Separated Info: {separated_info}")
+
+        # Ensure the info array is padded to avoid index errors
         while len(separated_info) < 4:
             separated_info.append("")
         logger.info(f"Padded Separated Info: {separated_info}")
@@ -1376,28 +1403,6 @@ def scrape_job_details(job_url, index, job_number, page):
         applink = soup.select("#mainContent > div.section.single > div:nth-child(2) > font > a")
         application_link = ", ".join([a['href'] for a in applink if a.get('href')])
         logger.info(f"Application Link: {application_link}")
-
-        if application_link:
-            if application_link.startswith('/'):
-                application_link = 'https://jobwebuganda.com' + application_link
-            application_link = clean_application_url(application_link)
-            if not validate_application_method(application_link):
-                application_link = ""
-                logger.warning(f"Invalid application URL after cleaning: {application_link}")
-
-        application_text = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > font')
-        application_text = application_text.text.strip() if application_text else ""
-        extracted_email = ""
-        if application_text:
-            email_match = re.search(r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', application_text)
-            extracted_email = email_match.group(0) if email_match and validate_application_method(email_match.group(0), is_email=True) else ""
-
-        application = application_link if application_link else extracted_email
-        if not application:
-            logger.warning(f"No valid application method extracted for job URL: {job_url}")
-
-        job_id = hashlib.md5(job_url.encode()).hexdigest()[:16]
-        job_fields = f"{category1}, {category2}".strip(", ")
 
         job_data = {
             'Job ID': job_id,
