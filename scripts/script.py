@@ -1517,7 +1517,82 @@ def scrape_job_details(job_url):
             logger.error(f"Error crawling page {url}: {str(e)}")
             save_last_processed_page(i)
             continue
+
+def crawl_and_process():
+    southafrica_processed_job_ids, processed_job_urls, processed_companies = load_southafrica_processed_job_ids()
+    print(f"Loaded {len(southafrica_processed_job_ids)} previously processed Job IDs, {len(processed_job_urls)} URLs, and {len(processed_companies)} companies")
     
+    result = []
+    # Scrape the first 2 pages
+    for i in range(1, 3):  # Python range is exclusive of end, so 3 for pages 1 and 2
+        url = f'https://jobwebuganda.com/jobs/page/{i}'
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=10)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            
+            # Find job links
+            job_list = soup.select('#titlo > strong > a')
+            job_links = ['https://jobwebuganda.com' + a['href'] for a in job_list if a.has_attr('href')]
+            print(f"Collected {len(job_links)} job URLs from page {i}")
+            
+            # Process each job URL
+            for index, job_url in enumerate(job_links):
+                job_number = index + 1
+                print(f"\nProcessing job {job_number} from page {i}: {job_url}")
+                if job_url in processed_job_urls:
+                    print(f"Skipping job {job_number}: URL {job_url} already processed.")
+                    continue
+                
+                job_data, company_data = scrape_job_details(job_url)
+                if not job_data or not company_data:
+                    print(f"Failed to scrape job details from {job_url}")
+                    continue
+                
+                job_data['URL Page'] = str(i)
+                job_data['Job Number'] = str(job_number)
+                print(f"\nRaw Scraped Data for Job {job_number} (Job ID: {job_data.get('Job ID', '')})")
+                print("-" * 50)
+                for key, value in job_data.items():
+                    print(f"{key}: {value}")
+                print("-" * 50)
+                
+                job_id = str(job_data.get("Job ID", ""))
+                job_title = job_data.get("Job Title", "")
+                job_description = job_data.get("Job Description", "")
+                application = job_data.get("Application", "")
+                company_name = job_data.get("Company", "Unknown Company")
+                
+                if not job_id or pd.isna(job_id):
+                    print(f"Skipping job {job_number}: Empty or invalid Job ID.")
+                    continue
+                if job_id in southafrica_processed_job_ids:
+                    print(f"Skipping job {job_number}: Job ID {job_id} already processed.")
+                    continue
+                if not job_title or pd.isna(job_title):
+                    print(f"Skipping job {job_number}: Empty or invalid job title.")
+                    continue
+                if not job_description or pd.isna(job_description):
+                    print(f"Skipping job {job_number}: Empty or invalid job description.")
+                    continue
+                
+                # Save company to WordPress if not already processed
+                if company_name not in processed_companies and company_name != "Unknown Company":
+                    company_post_id, company_post_url = save_company_to_wordpress(index, company_data)
+                    if company_post_id:
+                        print(f"Successfully posted company {company_name} to WordPress. Post ID: {company_post_id}, URL: {company_post_url}")
+                    else:
+                        print(f"Failed to post company {company_name} to WordPress.")
+                
+                # Add job data to result
+                result.append(job_data)
+                
+        except requests.RequestException as e:
+            print(f"Error fetching page {url}: {str(e)}")
+            logger.error(f"Error fetching page {url}: {str(e)}")
+            continue
+    
+    return result
 
 def main():
     max_cycles = 10
