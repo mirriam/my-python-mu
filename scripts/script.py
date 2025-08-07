@@ -884,18 +884,47 @@ def save_processed_job_id(job_id, job_url, company_name, url_page, job_number):
         print(f"Error saving Job ID {job_id}: {str(e)}")
         raise
 
-def save_last_processed_page(page_number):
+def save_processed_job_id(job_id, job_url, company_name, url_page, job_number):
     try:
-        with open(LAST_PAGE_FILE, 'w') as f:
-            f.write(str(page_number))
-        logger.info(f"Saved last processed page: {page_number} to {LAST_PAGE_FILE}")
+        job_id = str(job_id)
+        job_url = sanitize_text(str(job_url), is_url=True)
+        company_name = sanitize_text(str(company_name))
+        url_page = str(url_page)
+        job_number = str(job_number)
+        new_row = pd.DataFrame({
+            'Job ID': [job_id],
+            'Job URL': [job_url],
+            'Company Name': [company_name],
+            'URL Page': [url_page],
+            'Job Number': [job_number]
+        })
+        if os.path.exists(PROCESSED_IDS_FILE):
+            df = pd.read_csv(PROCESSED_IDS_FILE)
+            if not df.empty and job_id not in df['Job ID'].astype(str).values:
+                df = pd.concat([df, new_row], ignore_index=True)
+                df.to_csv(PROCESSED_IDS_FILE, index=False)
+            elif df.empty:
+                new_row.to_csv(PROCESSED_IDS_FILE, index=False)
+        else:
+            new_row.to_csv(PROCESSED_IDS_FILE, index=False)
+        logger.info(f"Saved Job ID {job_id}, URL {job_url}, Company {company_name}, Page {url_page}, Job Number {job_number} to {PROCESSED_IDS_FILE}")
     except Exception as e:
-        logger.error(f"Error saving last processed page {page_number}: {str(e)}")
-        print(f"Error saving last processed page {page_number}: {str(e)}")
+        logger.error(f"Error saving Job ID {job_id}: {str(e)}")
+        print(f"Error saving Job ID {job_id}: {str(e)}")
 
 def load_last_processed_page():
-    logger.info("Starting from page 5 as per configuration.")
-    return 1
+    try:
+        if os.path.exists(LAST_PAGE_FILE):
+            with open(LAST_PAGE_FILE, 'r') as f:
+                page = int(f.read().strip())
+                logger.info(f"Loaded last processed page: {page}")
+                return page
+        logger.info("No last processed page file found. Starting from page 1.")
+        return 1
+    except Exception as e:
+        logger.error(f"Error loading last processed page: {str(e)}")
+        print(f"Error loading last processed page: {str(e)}. Starting from page 1.")
+        return 1
 
 def validate_application_method(value, is_email=False):
     if not value:
@@ -1356,7 +1385,7 @@ def add_three_months_to_date(date_str):
         print(f"Invalid date format: {date_str}")
         return None
 
-def scrape_job_details(job_url):
+def scrape_job_details(job_url, index, job_number, i):
     try:
         resp = requests.get(job_url, headers=HEADERS, timeout=10)
         resp.raise_for_status()
@@ -1383,12 +1412,10 @@ def scrape_job_details(job_url):
         
         # Date posted
         date_posted_str = ""  # Not present in new code
-        new_date_string = ""  # Not present in new code (add_three_months_to_date not provided)
+        new_date_string = ""  # Not used, but kept for compatibility
         
         # Deadline
-        deadline = ""  # Not present in new code, using new_date_string if it existed
-        if not deadline:
-            deadline = new_date_string if new_date_string else ""
+        deadline = new_date_string if new_date_string else ""
         
         # Job description
         job_description = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > font').get_text(strip=True) if soup.select_one('#mainContent > div.section.single > div:nth-child(2) > font') else ""
@@ -1432,19 +1459,19 @@ def scrape_job_details(job_url):
                 company_resp.raise_for_status()
                 company_soup = BeautifulSoup(company_resp.text, 'html.parser')
                 company_data['company_name'] = company_soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(2) > a').get_text(strip=True) if company_soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(2) > a') else company_name
-                company_data['company_logo'] = []  # Not present in new code
-                company_data['company_industry'] = ""  # Not present in new code
-                company_data['company_founded'] = ""  # Not present in new code
-                company_data['company_type'] = ""  # Not present in new code
-                company_data['company_website'] = ""  # Not present in new code
-                company_data['company_address'] = ""  # Not present in new code
-                company_data['company_details'] = ""  # Not present in new code
+                company_data['company_logo'] = ""  # Not present in new code, set as string
+                company_data['company_industry'] = ""
+                company_data['company_founded'] = ""
+                company_data['company_type'] = ""
+                company_data['company_website'] = ""
+                company_data['company_address'] = ""
+                company_data['company_details'] = ""
             except Exception as e:
                 print(f"Error fetching company details from {company_urls[0]}: {str(e)}")
                 logger.error(f"Error fetching company details from {company_urls[0]}: {str(e)}")
                 company_data = {
                     'company_name': company_name,
-                    'company_logo': [],
+                    'company_logo': "",
                     'company_industry': "",
                     'company_founded': "",
                     'company_type': "",
@@ -1453,14 +1480,14 @@ def scrape_job_details(job_url):
                     'company_details': ""
                 }
         
-        # Separated info (from new code)
+        # Separated info
         info = soup.select_one('#topss').get_text(strip=True) if soup.select_one('#topss') else ""
         separated_info = [item.strip() for item in info.split(':') if item.strip()]
         while len(separated_info) < 4:
             separated_info.append("")
         
         job_id = hashlib.md5(job_url.encode()).hexdigest()[:16]
-        return {
+        job_data = {
             'Job ID': job_id,
             'Job Title': job_title_clean,
             'Job Description': job_description,
@@ -1473,7 +1500,7 @@ def scrape_job_details(job_url):
             'Deadline': deadline,
             'Application': application,
             'Company': company_data.get('company_name', company_name),
-            'Company Logo': ', '.join(company_data.get('company_logo', [])),
+            'Company Logo': company_data.get('company_logo', ''),
             'Company Industry': company_data.get('company_industry', ''),
             'Company Founded': company_data.get('company_founded', ''),
             'Company Type': company_data.get('company_type', ''),
@@ -1482,49 +1509,52 @@ def scrape_job_details(job_url):
             'Company Details': company_data.get('company_details', ''),
             'Job URL': job_url,
             'New Date String': new_date_string,
-            'Separated Info Company': separated_info[0],  # From new code
-            'Separated Info Location': separated_info[1],  # From new code
-            'Separated Info State': separated_info[2],  # From new code
-            'Separated Info Job Type': separated_info[3]  # From new code
-        }, company_data
+            'Separated Info Company': separated_info[0],
+            'Separated Info Location': separated_info[1],
+            'Separated Info State': separated_info[2],
+            'Separated Info Job Type': separated_info[3]
+        }
+
+        # Moved paraphrasing and posting logic here
+        extracted_title = extract_job_title(job_title_clean)
+        print(f"\nParaphrasing Job Title and Description for Job ID: {job_id}")
+        print("-" * 30)
+        print(f"Extracted Job Title: {extracted_title}")
+        combined_paraphrased, rewritten_title, rewritten_description = paraphrase_title_and_description(
+            extracted_title,
+            job_description,
+            index,
+            max_attempts=5
+        )
+        company_name = job_data.get("Company", "Unknown Company")
+        if company_name not in processed_companies and company_name != "Unknown Company":
+            company_post_id, company_post_url = save_company_to_wordpress(index, company_data)
+            if company_post_id:
+                print(f"Successfully posted company {company_name} to WordPress. Post ID: {company_post_id}, URL: {company_post_url}")
+                processed_companies.add(company_name)
+            else:
+                print(f"Failed to post company {company_name} to WordPress.")
+        post_id, post_url = save_article_to_wordpress(index, job_data, rewritten_title, rewritten_description, application)
+        if post_id:
+            print(f"Successfully posted job {job_number} (Job ID: {job_id}, URL: {job_url}) to WordPress. Post ID: {post_id}, URL: {post_url}")
+            save_processed_job_id(job_id, job_url, company_name, i, job_number)
+        else:
+            print(f"Failed to post job {job_number} (Job ID: {job_id}, URL: {job_url}) to WordPress.")
+            save_processed_job_id(job_id, job_url, company_name, i, job_number)
+        
+        return job_data, company_data
     except Exception as e:
         print(f"Error scraping job details from {job_url}: {str(e)}")
         logger.error(f"Error scraping job details from {job_url}: {str(e)}")
         return None, None
-                extracted_title = extract_job_title(job_title)
-                print(f"\nParaphrasing Job Title and Description for Job ID: {job_id}")
-                print("-" * 30)
-                print(f"Extracted Job Title: {extracted_title}")
-                combined_paraphrased, rewritten_title, rewritten_description = paraphrase_title_and_description(
-                    extracted_title,
-                    job_description,
-                    index,
-                    max_attempts=5
-                )
-                post_id, post_url = save_article_to_wordpress(index, job_data, rewritten_title, rewritten_description, application)
-                if post_id:
-                    print(f"Successfully posted job {job_number} (Job ID: {job_id}, URL: {job_url}) to WordPress. Post ID: {post_id}, URL: {post_url}")
-                else:
-                    print(f"Failed to post job {job_number} (Job ID: {job_id}, URL: {job_url}) to WordPress.")
-                    save_processed_job_id(job_id, job_url, company_name, i, job_number)
-                    time.sleep(10)
-                if job_number % 10 == 0:
-                    logger.info("Pausing for 30 seconds to avoid server overload")
-                    time.sleep(30)
-            save_last_processed_page(i)
-        except Exception as e:
-            print(f"Error crawling page {url}: {str(e)}")
-            logger.error(f"Error crawling page {url}: {str(e)}")
-            save_last_processed_page(i)
-            continue
 
 def crawl_and_process():
-    southafrica_processed_job_ids, processed_job_urls, processed_companies = load_southafrica_processed_job_ids()
-    print(f"Loaded {len(southafrica_processed_job_ids)} previously processed Job IDs, {len(processed_job_urls)} URLs, and {len(processed_companies)} companies")
+    uganda_processed_job_ids, processed_job_urls, processed_companies = load_uganda_processed_job_ids()
+    print(f"Loaded {len(uganda_processed_job_ids)} previously processed Job IDs, {len(processed_job_urls)} URLs, and {len(processed_companies)} companies")
     
     result = []
-    # Scrape the first 2 pages
-    for i in range(1, 3):  # Python range is exclusive of end, so 3 for pages 1 and 2
+    start_page = load_last_processed_page()
+    for i in range(start_page, start_page + 2):  # Process 2 pages starting from last processed
         url = f'https://jobwebuganda.com/jobs/page/{i}'
         try:
             resp = requests.get(url, headers=HEADERS, timeout=10)
@@ -1544,7 +1574,7 @@ def crawl_and_process():
                     print(f"Skipping job {job_number}: URL {job_url} already processed.")
                     continue
                 
-                job_data, company_data = scrape_job_details(job_url)
+                job_data, company_data = scrape_job_details(job_url, index, job_number, i)
                 if not job_data or not company_data:
                     print(f"Failed to scrape job details from {job_url}")
                     continue
@@ -1557,39 +1587,16 @@ def crawl_and_process():
                     print(f"{key}: {value}")
                 print("-" * 50)
                 
-                job_id = str(job_data.get("Job ID", ""))
-                job_title = job_data.get("Job Title", "")
-                job_description = job_data.get("Job Description", "")
-                application = job_data.get("Application", "")
-                company_name = job_data.get("Company", "Unknown Company")
-                
-                if not job_id or pd.isna(job_id):
-                    print(f"Skipping job {job_number}: Empty or invalid Job ID.")
-                    continue
-                if job_id in southafrica_processed_job_ids:
-                    print(f"Skipping job {job_number}: Job ID {job_id} already processed.")
-                    continue
-                if not job_title or pd.isna(job_title):
-                    print(f"Skipping job {job_number}: Empty or invalid job title.")
-                    continue
-                if not job_description or pd.isna(job_description):
-                    print(f"Skipping job {job_number}: Empty or invalid job description.")
-                    continue
-                
-                # Save company to WordPress if not already processed
-                if company_name not in processed_companies and company_name != "Unknown Company":
-                    company_post_id, company_post_url = save_company_to_wordpress(index, company_data)
-                    if company_post_id:
-                        print(f"Successfully posted company {company_name} to WordPress. Post ID: {company_post_id}, URL: {company_post_url}")
-                    else:
-                        print(f"Failed to post company {company_name} to WordPress.")
-                
-                # Add job data to result
                 result.append(job_data)
                 
+                if job_number % 10 == 0:
+                    logger.info("Pausing for 30 seconds to avoid server overload")
+                    time.sleep(30)
+            save_last_processed_page(i)
         except requests.RequestException as e:
             print(f"Error fetching page {url}: {str(e)}")
             logger.error(f"Error fetching page {url}: {str(e)}")
+            save_last_processed_page(i)
             continue
     
     return result
@@ -1602,7 +1609,7 @@ def main():
         crawl_and_process()
         cycle_count += 1
         print(f"\nAll jobs processed for cycle {cycle_count}. Waiting 5 minutes before starting the next cycle...")
-        time.sleep(7200)  # 2 hours in seconds
+        time.sleep(300)  # 5 minutes in seconds
     print("Reached maximum cycles. Exiting.")
 
 if __name__ == "__main__":
