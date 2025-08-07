@@ -1323,43 +1323,7 @@ def add_three_months_to_date(date_str):
         print(f"Invalid date format: {date_str}")
         return None
 
-# New scraping functions
-def scrape_jobs():
-    result = []
-    uganda_processed_job_ids, processed_job_urls, processed_companies = load_uganda_processed_job_ids()
-    print(f"Loaded {len(uganda_processed_job_ids)} previously processed Job IDs, {len(processed_job_urls)} URLs, and {len(processed_companies)} companies")
-    
-    start_page = load_last_processed_page()
-    for i in range(start_page, start_page + 2):  # Scrape the first 2 pages
-        url = f'https://jobwebuganda.com/jobs/page/{i}'
-        logger.info(f"Fetching page: {url}")
-        try:
-            resp = requests.get(url, headers=HEADERS, timeout=10)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            job_list = soup.select("#titlo > strong > a")
-            urls = ['https://jobwebuganda.com' + a['href'] for a in job_list if a.get('href')]
-            logger.info(f"Collected {len(urls)} job URLs from page {i}: {urls}")
 
-            for index, job_url in enumerate(urls):
-                job_number = index + 1
-                print(f"\nProcessing job {job_number} from page {i}: {job_url}")
-                if job_url in processed_job_urls:
-                    print(f"Skipping job {job_number}: URL {job_url} already processed.")
-                    continue
-                data = scrape_job_details(job_url, index, job_number, i)
-                if data:
-                    result.extend(data)
-                if job_number % 10 == 0:
-                    logger.info("Pausing for 30 seconds to avoid server overload")
-                    time.sleep(30)
-            save_last_processed_page(i)
-        except requests.RequestException as e:
-            logger.error(f"Error fetching page {url}: {e}")
-            print(f"Error fetching page {url}: {e}")
-            save_last_processed_page(i)
-            continue
-    return result
 
 def scrape_job_details(job_url, index, job_number, page):
     res = []
