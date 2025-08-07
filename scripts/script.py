@@ -1403,23 +1403,23 @@ def scrape_job_details(job_url, index, job_number, i):
         
         # Job details
         job_type = soup.select_one('#topss > span').get_text(strip=True) if soup.select_one('#topss > span') else ""
-        job_qualifications = ""  # Not present in new code
-        job_experiences = ""  # Not present in new code
+        job_qualifications = ""
+        job_experiences = ""
         job_locations = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(3)').get_text(strip=True) if soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(3)') else "Remote"
         logger.debug(f"Extracted location: {job_locations}")
         job_fields = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(4) > a:nth-child(2)').get_text(strip=True) if soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(4) > a:nth-child(2)') else ""
         job_fields += ", " + soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(4) > a:nth-child(3)').get_text(strip=True) if soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(4) > a:nth-child(3)') else ""
         
         # Date posted
-        date_posted_str = ""  # Not present in new code
-        new_date_string = ""  # Not used, but kept for compatibility
+        date_posted_str = ""
+        new_date_string = ""
         
         # Deadline
         deadline = new_date_string if new_date_string else ""
         
         # Job description
         job_description = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > font').get_text(strip=True) if soup.select_one('#mainContent > div.section.single > div:nth-child(2) > font') else ""
-        application_detail = ""  # Not explicitly separated in new code
+        application_detail = ""
         job_description = job_description + (f"\n\nApplication Instructions: {application_detail}" if application_detail else "")
         
         # Fallback for company name in description
@@ -1459,7 +1459,7 @@ def scrape_job_details(job_url, index, job_number, i):
                 company_resp.raise_for_status()
                 company_soup = BeautifulSoup(company_resp.text, 'html.parser')
                 company_data['company_name'] = company_soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(2) > a').get_text(strip=True) if company_soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(2) > a') else company_name
-                company_data['company_logo'] = ""  # Not present in new code, set as string
+                company_data['company_logo'] = ""
                 company_data['company_industry'] = ""
                 company_data['company_founded'] = ""
                 company_data['company_type'] = ""
@@ -1515,7 +1515,7 @@ def scrape_job_details(job_url, index, job_number, i):
             'Separated Info Job Type': separated_info[3]
         }
 
-        # Moved paraphrasing and posting logic here
+        # Paraphrase and post
         extracted_title = extract_job_title(job_title_clean)
         print(f"\nParaphrasing Job Title and Description for Job ID: {job_id}")
         print("-" * 30)
@@ -1527,6 +1527,7 @@ def scrape_job_details(job_url, index, job_number, i):
             max_attempts=5
         )
         company_name = job_data.get("Company", "Unknown Company")
+        processed_companies = load_uganda_processed_job_ids()[2]  # Get company names
         if company_name not in processed_companies and company_name != "Unknown Company":
             company_post_id, company_post_url = save_company_to_wordpress(index, company_data)
             if company_post_id:
@@ -1554,7 +1555,7 @@ def crawl_and_process():
     
     result = []
     start_page = load_last_processed_page()
-    for i in range(start_page, start_page + 2):  # Process 2 pages starting from last processed
+    for i in range(start_page, start_page + 2):
         url = f'https://jobwebuganda.com/jobs/page/{i}'
         try:
             resp = requests.get(url, headers=HEADERS, timeout=10)
