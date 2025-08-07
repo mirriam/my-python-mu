@@ -1325,84 +1325,96 @@ def add_three_months_to_date(date_str):
 
 
 
+# ... [All imports and prior code remain unchanged until scrape_jobs] ...
+
 def scrape_jobs():
     result = []
+    processed_ids, processed_urls, _ = load_uganda_processed_job_ids()
     for i in range(1, 3):  # Scrape the first 2 pages
         url = f'https://jobwebuganda.com/jobs/page/{i}'
         logger.info(f"Fetching page: {url}")
         try:
-            resp = requests.get(url, headers=headers)
-            resp.raise_for_status()  # Raise exception for bad status codes
+            resp = requests.get(url, headers=HEADERS)
+            resp.raise_for_status()
             soup = BeautifulSoup(resp.text, 'html.parser')
             job_list = soup.select("#titlo > strong > a")
             urls = [a['href'] for a in job_list if a.get('href')]
 
-            # Log collected URLs
             logger.info(f"Collected URLs on page {i}: {urls}")
 
-            # Iterate over each job URL and scrape job details
             for job_url in urls:
-                data = scrape_job_details(job_url)
+                if job_url in processed_urls:
+                    logger.info(f"Skipping already processed job URL: {job_url}")
+                    continue
+                data = scrape_job_details(job_url, i)
                 if data:
                     result.extend(data)
+                    processed_urls.add(job_url)
         except requests.RequestException as e:
             logger.error(f"Error fetching page {url}: {e}")
+            print(f"Error fetching page {url}: {str(e)}")
     
     return result
 
-def scrape_job_details(job_url):
+def scrape_job_details(job_url, page):
     res = []
     logger.info(f"Scraping job details from: {job_url}")
     try:
-        resp = requests.get(job_url, headers=headers)
-        resp.raise_for_status()  # Raise exception for bad status codes
+        resp = requests.get(job_url, headers=HEADERS)
+        resp.raise_for_status()
         soup = BeautifulSoup(resp.text, 'html.parser')
 
         # Scrape individual job details
         job_title = soup.select_one("div.section.single > div.section_header > h1")
-        job_title = job_title.text.strip() if job_title else ""
-        logger.info(f"Job Title: {job_title}")
+        job_title_clean = sanitize_text(job_title.text.strip()) if job_title else "Untitled Job"
+        logger.info(f"Job Title: {job_title_clean}")
 
         company = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(2) > a')
-        company = company.text.strip() if company else ""
+        company = sanitize_text(company.text.strip()) if company else "Unknown Company"
         logger.info(f"Company: {company}")
 
         location = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(3)')
-        location = location.text.strip() if location else ""
+        location = sanitize_text(location.text.strip()) if location else "Remote"
         logger.info(f"Location: {location}")
 
         job_type = soup.select_one('#topss > span')
-        job_type = job_type.text.strip() if job_type else ""
+        job_type = sanitize_text(job_type.text.strip()) if job_type else "Full-time"
         logger.info(f"Job Type: {job_type}")
 
         category1 = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(4) > a:nth-child(2)')
-        category1 = category1.text.strip() if category1 else ""
+        category1 = sanitize_text(category1.text.strip()) if category1 else ""
         logger.info(f"Category 1: {category1}")
 
         category2 = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(4) > a:nth-child(3)')
-        category2 = category2.text.strip() if category2 else ""
+        category2 = sanitize_text(category2.text.strip()) if category2 else ""
         logger.info(f"Category 2: {category2}")
 
         info = soup.select_one("#topss")
-        info = info.text.strip() if info else ""
+        info = sanitize_text(info.text.strip()) if info else ""
         logger.info(f"Info: {info}")
 
-        # Separate the `info` text into columns based on the ":" symbol
         separated_info = [item.strip() for item in info.split(':') if item.strip()]
-        logger.info(f"Separated Info: {separated_info}")
-
-        # Ensure the info array is padded to avoid index errors
         while len(separated_info) < 4:
             separated_info.append("")
-        logger.info(f"Padded Separated Info: {separated_info}")
+        logger.info(f"Separated Info: {separated_info}")
 
         description = soup.select_one("#mainContent > div.section.single > div:nth-child(2) > font")
-        description = description.text.strip() if description else ""
+        description = sanitize_text(description.text.strip()) if description else ""
         logger.info(f"Description: {description}")
 
         applink = soup.select("#mainContent > div.section.single > div:nth-child(2) > font > a")
-        application_link = ", ".join([a['href'] for a in applink if a.get('href')])
-        logger.info(f"Application Link: {application_link}")
+        application = ", ".join([sanitize_text(a['href'], is_url=True) for a in applink if a.get('href')]) or ""
+        logger.info(f"Application Link: {application}")
+
+        # Generate job_id based on job_url
+        job_id = hashlib.md5(job_url.encode()).hexdigest()
+        logger.info(f"Generated Job ID: {job_id}")
+
+        # Combine categories for job_fields
+        job_fields = ", ".join(filter(None, [category1, category2]))
+
+        # Use page as job_number for simplicity
+        job_number = f"job_{page}_{len(res) + 1}"
 
         job_data = {
             'Job ID': job_id,
@@ -1431,7 +1443,7 @@ def scrape_job_details(job_url):
             'Separated Info State': separated_info[2],
             'Separated Info Job Type': separated_info[3],
             'URL Page': str(page),
-            'Job Number': str(job_number)
+            'Job Number': job_number
         }
 
         company_data = {
@@ -1452,20 +1464,19 @@ def scrape_job_details(job_url):
         combined_paraphrased, rewritten_title, rewritten_description = paraphrase_title_and_description(
             extracted_title,
             description,
-            index,
+            len(res),
             max_attempts=5
         )
 
         processed_companies = load_uganda_processed_job_ids()[2]
         if company not in processed_companies and company != "Unknown Company":
-            company_post_id, company_post_url = save_company_to_wordpress(index, company_data)
+            company_post_id, company_post_url = save_company_to_wordpress(len(res), company_data)
             if company_post_id:
                 print(f"Successfully posted company {company} to WordPress. Post ID: {company_post_id}, URL: {company_post_url}")
-                processed_companies.add(company)
             else:
                 print(f"Failed to post company {company} to WordPress.")
 
-        post_id, post_url = save_article_to_wordpress(index, job_data, rewritten_title, rewritten_description, application)
+        post_id, post_url = save_article_to_wordpress(len(res), job_data, rewritten_title, rewritten_description, application)
         if post_id:
             print(f"Successfully posted job {job_number} (Job ID: {job_id}, URL: {job_url}) to WordPress. Post ID: {post_id}, URL: {post_url}")
             save_processed_job_id(job_id, job_url, company, page, job_number)
@@ -1478,7 +1489,7 @@ def scrape_job_details(job_url):
 
         return res
     except requests.RequestException as e:
-        logger.error(f"Error scraping job details from {job_url}: {e}")
+        logger.error(f"Error scraping job details from {job_url}: {str(e)}")
         print(f"Error scraping job details from {job_url}: {str(e)}")
         return None
 
@@ -1494,7 +1505,7 @@ def main():
             logger.info(f"No jobs found in cycle {cycle_count + 1}. Moving to next cycle.")
             print(f"No jobs found in cycle {cycle_count + 1}. Moving to next cycle.")
             cycle_count += 1
-            time.sleep(60)  # Wait before next cycle to avoid overloading
+            time.sleep(60)
             continue
 
         for index, job in enumerate(jobs):
@@ -1505,7 +1516,6 @@ def main():
                 company_name = job_data.get('Company', 'Unknown Company')
                 logger.info(f"Processing job {index + 1} (Job ID: {job_id}, URL: {job_url})")
 
-                # Extract and paraphrase title and description
                 job_title = extract_job_title(job_data.get('Job Title', ''))
                 job_description = job_data.get('Job Description', '')
                 application = job_data.get('Application', '')
@@ -1518,7 +1528,6 @@ def main():
                     max_attempts=5
                 )
 
-                # Save company to WordPress if not already processed
                 processed_companies = load_uganda_processed_job_ids()[2]
                 if company_name not in processed_companies and company_name != "Unknown Company":
                     company_post_id, company_post_url = save_company_to_wordpress(index, company_data)
@@ -1529,7 +1538,6 @@ def main():
                         logger.warning(f"Failed to post company {company_name} to WordPress.")
                         print(f"Failed to post company {company_name} to WordPress.")
 
-                # Save job to WordPress
                 post_id, post_url = save_article_to_wordpress(
                     index,
                     job_data,
@@ -1545,7 +1553,6 @@ def main():
                     logger.error(f"Failed to post job {index + 1} (Job ID: {job_id}) to WordPress.")
                     print(f"Failed to post job {index + 1} (Job ID: {job_id}) to WordPress.")
 
-                # Save processed job ID
                 save_processed_job_id(
                     job_id,
                     job_url,
@@ -1554,7 +1561,6 @@ def main():
                     job_data.get('Job Number', '')
                 )
 
-                # Pause to avoid server overload
                 if (index + 1) % 5 == 0:
                     logger.info("Pausing for 30 seconds after processing 5 jobs.")
                     print("Pausing for 30 seconds after processing 5 jobs.")
@@ -1568,7 +1574,7 @@ def main():
         cycle_count += 1
         logger.info(f"Completed cycle {cycle_count}. Waiting 60 seconds before next cycle.")
         print(f"Completed cycle {cycle_count}. Waiting 60 seconds before next cycle.")
-        time.sleep(60)  # Wait before starting next cycle
+        time.sleep(60)
 
     logger.info("Completed all processing cycles.")
     print("Completed all processing cycles.")
