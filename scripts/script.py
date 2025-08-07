@@ -1361,51 +1361,60 @@ def scrape_job_details(job_url):
         resp = requests.get(job_url, headers=HEADERS, timeout=10)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, 'html.parser')
-        job_title_elem = soup.select_one('h2.mag-b') or soup.select_one('h1')
-        job_title = job_title_elem.text.replace("Method of Application", "").strip() if job_title_elem else ""
+        
+        # Job title
+        job_title_elem = soup.select_one('div.section.single > div.section_header > h1')
+        job_title = job_title_elem.get_text(strip=True) if job_title_elem else ""
         parts = job_title.split(" at ")
         trimmed_parts = [part.strip() for part in parts]
         job_title_clean = trimmed_parts[0] if trimmed_parts else job_title
-        company_name = trimmed_parts[1] if len(trimmed_parts) > 1 else None
-        if not company_name:
-            company_name_elem = soup.select_one('#wrap-comp-jobs > div.company-jobs > h1') or soup.select_one('h1.company-name') or soup.select_one('div.company-info > h2')
-            company_name = company_name_elem.text.replace("Recruitment", "").strip() if company_name_elem else "Unknown Company"
-        job_type = soup.select_one('#printable > ul > li:nth-child(1) > span.jkey-info').text.strip() if soup.select_one('#printable > ul > li:nth-child(1) > span.jkey-info') else ""
-        job_qualifications = soup.select_one('#printable > ul > li:nth-child(2) > span.jkey-info').text.strip() if soup.select_one('#printable > ul > li:nth-child(2) > span.jkey-info') else ""
-        job_experiences = soup.select_one('#printable > ul > li:nth-child(3) > span.jkey-info').text.strip() if soup.select_one('#printable > ul > li:nth-child(3) > span.jkey-info') else ""
-        job_locations = soup.select_one('ul.job-info > li:nth-child(4) > span.jkey-info').text.strip() if soup.select_one('ul.job-info > li:nth-child(4) > span.jkey-info') else ""
-        if not job_locations:
-            job_locations = soup.select_one('#printable > ul > li:nth-child(4) > span.jkey-info').text.strip() if soup.select_one('#printable > ul > li:nth-child(4) > span.jkey-info') else "Remote"
+        
+        # Company name
+        company_name = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(2) > a').get_text(strip=True) if soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(2) > a') else "Unknown Company"
+        
+        # Job details
+        job_type = soup.select_one('#topss > span').get_text(strip=True) if soup.select_one('#topss > span') else ""
+        job_qualifications = ""  # Not present in new code
+        job_experiences = ""  # Not present in new code
+        job_locations = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(3)').get_text(strip=True) if soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(3)') else "Remote"
         logger.debug(f"Extracted location: {job_locations}")
-        job_fields = soup.select_one('#printable > ul > li:nth-child(5) > span.jkey-info').text.strip() if soup.select_one('#printable > ul > li:nth-child(5) > span.jkey-info') else ""
-        date_posted_str = soup.select_one('#posted-date').text.strip() if soup.select_one('#posted-date') else ""
-        try:
-            datetime.strptime(re.sub(r'^Posted:\s*', '', date_posted_str.strip()), '%b %d, %Y')
-            new_date_string = add_three_months_to_date(date_posted_str)
-        except ValueError:
-            print(f"Invalid date format: {date_posted_str}")
-            return None, None
-        deadline_elem = soup.select_one('div.read-left-section > ul > li.read-head > div > div:nth-child(2)')
-        deadline = deadline_elem.text.strip().replace("Deadline:", "").replace("Not specified", new_date_string).strip() if deadline_elem else new_date_string
-        job_description = soup.select_one('div.job-details').text.strip() if soup.select_one('div.job-details') else ""
-        application_detail = soup.select_one('#printable > div.mag-b.bm-b-30 > p').text.strip() if soup.select_one('#printable > div.mag-b.bm-b-30 > p') else ""
+        job_fields = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(4) > a:nth-child(2)').get_text(strip=True) if soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(4) > a:nth-child(2)') else ""
+        job_fields += ", " + soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(4) > a:nth-child(3)').get_text(strip=True) if soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(4) > a:nth-child(3)') else ""
+        
+        # Date posted
+        date_posted_str = ""  # Not present in new code
+        new_date_string = ""  # Not present in new code (add_three_months_to_date not provided)
+        
+        # Deadline
+        deadline = ""  # Not present in new code, using new_date_string if it existed
+        if not deadline:
+            deadline = new_date_string if new_date_string else ""
+        
+        # Job description
+        job_description = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > font').get_text(strip=True) if soup.select_one('#mainContent > div.section.single > div:nth-child(2) > font') else ""
+        application_detail = ""  # Not explicitly separated in new code
         job_description = job_description + (f"\n\nApplication Instructions: {application_detail}" if application_detail else "")
+        
+        # Fallback for company name in description
         if company_name == "Unknown Company" and job_description:
             company_match = re.search(r'(?:at|for|with)\s+([A-Z][\w\s&-]+)\b', job_description, re.IGNORECASE)
             company_name = company_match.group(1).strip() if company_match else "Unknown Company"
         if company_name == "Unknown Company":
             logger.warning(f"Failed to extract company name for job URL: {job_url}")
-        application_text = soup.select_one('#printable > div.mag-b.bm-b-30') or soup.select_one('div.application-details') or soup.select_one('div.job-apply')
-        application_text = application_text.text.strip() if application_text else ""
+        
+        # Application method
+        application_text = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > font') or soup.select_one('div.job-apply')
+        application_text = application_text.get_text(strip=True) if application_text else ""
         extracted_email = None
         if application_text:
             email_match = re.search(r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', application_text)
             extracted_email = email_match.group(0) if email_match and validate_application_method(email_match.group(0), is_email=True) else ""
-        application_url_elem = soup.select_one('#printable > div.mag-b.bm-b-30 > a') or soup.select_one('a.apply-button') or soup.select_one('a[href*="apply"]')
-        application_url = application_url_elem.get('href', '') if application_url_elem else ""
+        
+        applink = soup.select('#mainContent > div.section.single > div:nth-child(2) > font > a')
+        application_url = ', '.join([link['href'] for link in applink if link.has_attr('href')]) if applink else ""
         if application_url:
             if application_url.startswith('/'):
-                application_url = 'https://www.myjobmag.co.za' + application_url
+                application_url = 'https://jobwebuganda.com' + application_url
             application_url = clean_application_url(application_url)
             if not validate_application_method(application_url):
                 application_url = ""
@@ -1413,40 +1422,23 @@ def scrape_job_details(job_url):
         application = application_url if application_url else extracted_email if extracted_email else ""
         if not application:
             logger.warning(f"No valid application method extracted for job URL: {job_url}")
-        company_urls = ['https://www.myjobmag.co.za' + a.get('href') for a in soup.select('#printable > a') if a.get('href')]
+        
+        # Company details
+        company_urls = ['https://jobwebuganda.com' + a.get('href') for a in soup.select('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(2) > a') if a.get('href')]
         company_data = {}
         if company_urls:
             try:
                 company_resp = requests.get(company_urls[0], headers=HEADERS, timeout=10)
                 company_resp.raise_for_status()
                 company_soup = BeautifulSoup(company_resp.text, 'html.parser')
-                company_data['company_name'] = company_soup.select_one('#wrap-comp-jobs > div.company-jobs > h1').text.replace("Recruitment", "").strip() if company_soup.select_one('#wrap-comp-jobs > div.company-jobs > h1') else company_name
-                company_data['company_logo'] = ['https://www.myjobmag.co.za' + img.get('src') for img in company_soup.select('#wrap-comp-jobs > div.company-jobs > div.company-logo > img') if img.get('src') and (img.get('src').lower().endswith('.png') or img.get('src').lower().endswith('.jpg') or img.get('src').lower().endswith('.jpeg'))]
-                company_data['company_industry'] = company_soup.select_one('#wrap-comp-jobs > div.company-jobs > div.company-details-right > ul > li:nth-child(1) > span.comp-info-desc > a').text.strip() if company_soup.select_one('#wrap-comp-jobs > div.company-jobs > div.company-details-right > ul > li:nth-child(1) > span.comp-info-desc > a') else ""
-                company_data['company_founded'] = company_soup.select_one('#wrap-comp-jobs > div.company-jobs > div.company-details-right > ul > li:nth-child(2) > span.comp-info-desc').text.strip() if company_soup.select_one('#wrap-comp-jobs > div.company-jobs > div.company-details-right > ul > li:nth-child(2) > span.comp-info-desc') else ""
-                company_data['company_type'] = company_soup.select_one('#wrap-comp-jobs > div.company-jobs > div.company-details-right > ul > li:nth-child(3) > span.comp-info-desc').text.strip() if company_soup.select_one('#wrap-comp-jobs > div.company-jobs > div.company-details-right > ul > li:nth-child(3) > span.comp-info-desc') else ""
-                company_website = ""
-                website_elem = company_soup.select_one('#wrap-comp-jobs > div.company-jobs > div.company-details-right > ul > li:nth-child(4) > span.comp-info-desc > a')
-                if website_elem and website_elem.get('href'):
-                    company_website = website_elem.get('href').strip()
-                else:
-                    website_text_elem = company_soup.select_one('#wrap-comp-jobs > div.company-jobs > div.company-details-right > ul > li:nth-child(4) > span.comp-info-desc')
-                    if website_text_elem:
-                        company_website = website_text_elem.text.strip()
-                excluded_domains = ['mysalaryscale.com', 'myjobmag.co.za', 'linkedin.com', 'twitter.com', 'facebook.com']
-                if company_website:
-                    company_website = clean_application_url(company_website)
-                    if any(domain in company_website.lower() for domain in excluded_domains):
-                        company_website = ""
-                    elif validate_application_method(company_website):
-                        company_data['company_website'] = company_website
-                    else:
-                        company_website = ""
-                else:
-                    company_website = ""
-                company_data['company_website'] = company_website
-                company_data['company_address'] = company_soup.select_one('#wrap-comp-jobs > div.company-jobs > div.company-details-right > ul > li:nth-child(5) > span.comp-info-desc').text.strip() if company_soup.select_one('#wrap-comp-jobs > div.company-jobs > div.company-details-right > ul > li:nth-child(5) > span.comp-info-desc') else ""
-                company_data['company_details'] = company_soup.select_one('#wrap-comp-jobs > div.company-jobs > div.mag-b.fl-r.ts-13.tc-b6.bm-b-35').text.strip() if company_soup.select_one('#wrap-comp-jobs > div.company-jobs > div.mag-b.fl-r.ts-13.tc-b6.bm-b-35') else ""
+                company_data['company_name'] = company_soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(2) > a').get_text(strip=True) if company_soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(2) > a') else company_name
+                company_data['company_logo'] = []  # Not present in new code
+                company_data['company_industry'] = ""  # Not present in new code
+                company_data['company_founded'] = ""  # Not present in new code
+                company_data['company_type'] = ""  # Not present in new code
+                company_data['company_website'] = ""  # Not present in new code
+                company_data['company_address'] = ""  # Not present in new code
+                company_data['company_details'] = ""  # Not present in new code
             except Exception as e:
                 print(f"Error fetching company details from {company_urls[0]}: {str(e)}")
                 logger.error(f"Error fetching company details from {company_urls[0]}: {str(e)}")
@@ -1460,6 +1452,13 @@ def scrape_job_details(job_url):
                     'company_address': "",
                     'company_details': ""
                 }
+        
+        # Separated info (from new code)
+        info = soup.select_one('#topss').get_text(strip=True) if soup.select_one('#topss') else ""
+        separated_info = [item.strip() for item in info.split(':') if item.strip()]
+        while len(separated_info) < 4:
+            separated_info.append("")
+        
         job_id = hashlib.md5(job_url.encode()).hexdigest()[:16]
         return {
             'Job ID': job_id,
@@ -1482,65 +1481,16 @@ def scrape_job_details(job_url):
             'Company Address': company_data.get('company_address', ''),
             'Company Details': company_data.get('company_details', ''),
             'Job URL': job_url,
-            'New Date String': new_date_string
+            'New Date String': new_date_string,
+            'Separated Info Company': separated_info[0],  # From new code
+            'Separated Info Location': separated_info[1],  # From new code
+            'Separated Info State': separated_info[2],  # From new code
+            'Separated Info Job Type': separated_info[3]  # From new code
         }, company_data
     except Exception as e:
         print(f"Error scraping job details from {job_url}: {str(e)}")
         logger.error(f"Error scraping job details from {job_url}: {str(e)}")
         return None, None
-
-def crawl_and_process():
-    southafrica_processed_job_ids, processed_job_urls, processed_companies = load_southafrica_processed_job_ids()
-    print(f"Loaded {len(southafrica_processed_job_ids)} previously processed Job IDs, {len(processed_job_urls)} URLs, and {len(processed_companies)} companies")
-    # Define the page range to scrape (pages 1 to 5)
-    for i in range(1, 6):
-        url = f'https://www.myjobmag.co.za/page/{i}'
-        try:
-            resp = requests.get(url, headers=HEADERS, timeout=10)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            job_links = ['https://www.myjobmag.co.za' + a.get('href') for a in soup.select('li.mag-b > h2 > a') if a.get('href')]
-            print(f"Collected {len(job_links)} job URLs from page {i}")
-            for index, job_url in enumerate(job_links):
-                job_number = index + 1
-                print(f"\nProcessing job {job_number} from page {i}: {job_url}")
-                if job_url in processed_job_urls:
-                    print(f"Skipping job {job_number}: URL {job_url} already processed.")
-                    continue
-                job_data, company_data = scrape_job_details(job_url)
-                if not job_data or not company_data:
-                    print(f"Failed to scrape job details from {job_url}")
-                    continue
-                job_data['URL Page'] = str(i)
-                job_data['Job Number'] = str(job_number)
-                print(f"\nRaw Scraped Data for Job {job_number} (Job ID: {job_data.get('Job ID', '')})")
-                print("-" * 50)
-                for key, value in job_data.items():
-                    print(f"{key}: {value}")
-                print("-" * 50)
-                job_id = str(job_data.get("Job ID", ""))
-                job_title = job_data.get("Job Title", "")
-                job_description = job_data.get("Job Description", "")
-                application = job_data.get("Application", "")
-                company_name = job_data.get("Company", "Unknown Company")
-                if not job_id or pd.isna(job_id):
-                    print(f"Skipping job {job_number}: Empty or invalid Job ID.")
-                    continue
-                if job_id in southafrica_processed_job_ids:
-                    print(f"Skipping job {job_number}: Job ID {job_id} already processed.")
-                    continue
-                if not job_title or pd.isna(job_title):
-                    print(f"Skipping job {job_number}: Empty or invalid job title.")
-                    continue
-                if not job_description or pd.isna(job_description):
-                    print(f"Skipping job {job_number}: Empty or invalid job description.")
-                    continue
-                if company_name not in processed_companies and company_name != "Unknown Company":
-                    company_post_id, company_post_url = save_company_to_wordpress(index, company_data)
-                    if company_post_id:
-                        print(f"Successfully posted company {company_name} to WordPress. Post ID: {company_post_id}, URL: {company_post_url}")
-                    else:
-                        print(f"Failed to post company {company_name} to WordPress.")
                 extracted_title = extract_job_title(job_title)
                 print(f"\nParaphrasing Job Title and Description for Job ID: {job_id}")
                 print("-" * 30)
