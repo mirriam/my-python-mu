@@ -1375,6 +1375,10 @@ def scrape_job_details(job_url, page):
         location2 = location2.text if location2 else ""
         description = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > div.job-details")
         description = description.text if description else ""
+        application = soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.company-details > div:nth-child(1) > ul > li.email-icon")
+        application = application.text if application else ""
+        website = soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.company-details > div:nth-child(1) > ul > li.url > a")
+        website = website.text if website else ""
         company_url_elements = soup.select("#page > div.container > div > div.three-quarters > div > div.module-content > div.company-details > div > p > strong > a")
         company_url = ['https://www.myjob.mu' + a.get('href') for a in company_url_elements]
         print(company_url)
