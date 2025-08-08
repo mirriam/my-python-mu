@@ -1327,87 +1327,55 @@ def add_three_months_to_date(date_str):
 
 # ... [All imports and prior code remain unchanged until scrape_jobs] ...
 
-def scrape_jobs():
+ef scrape_jobs():
     result = []
     for i in range(1, 6):
         url = f'https://www.myjob.mu/ShowResults.aspx?Keywords=&Location=&Category=&Page={i}'
         print(url)
-        
-        try:
-            response = requests.get(url, headers=headers)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            job_list = soup.select("#page > div.container > div > div.two-thirds > div > div > div.job-result-logo-title > div > h2 > a")
-            urls = [f'https://www.myjob.mu{link.get("href")}' for link in job_list]
-            
-            print(urls)
-            
-            for job_url in urls:
-                data = scrape_job_details(job_url)
-                if data:
-                    result.extend(data)
-                    
-        except requests.RequestException as e:
-            logger.error(f"Error fetching page {url}: {str(e)}")
-            
+        resp = requests.get(url).text
+        soup = BeautifulSoup(resp, 'html.parser')
+        job_list = soup.select("#page > div.container > div > div.two-thirds > div > div > div.job-result-logo-title > div > h2 > a")
+        urls = ['https://www.myjob.mu' + a.get('href') for a in job_list]
+        print(urls)
+        for job_url in urls:
+            data = scrape_job_details(job_url)
+            if data:
+                result.extend(data)
     return result
 
 def scrape_job_details(job_url):
     res = []
-    logger.info(f"Scraping job details from: {job_url}")
-    
+    print(job_url)
+    resp = requests.get(job_url).text
+    soup = BeautifulSoup(resp, 'html.parser')
+
+    job_title = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > h1").text
+    location = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > ul > li.location").text
+    salary = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > ul > li.salary").text
+    job_type = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > ul > li.employment-type").text
+    deadline = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > ul > li.closed-time").text.replace('Closing', '')
+    company_name = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.company-details > div > h2").text
+    logo_elements = soup.select("#page > div.container > div > div.three-quarters > div > div.module-content > div.company-details > img")
+    logo = [img.get('src') for img in logo_elements]
+    location2 = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.company-details > div > ul > li.address").text
+    description = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > div.job-details").text
+    company_url_elements = soup.select("#page > div.container > div > div.three-quarters > div > div.module-content > div.company-details > div > p > strong > a")
+    company_url = ['https://www.myjob.mu' + a.get('href') for a in company_url_elements]
+    print(company_url)
+
     try:
-        response = requests.get(job_url, headers=headers)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        job_title = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > h1").text.strip()
-        location = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > ul > li.location").text.strip()
-        salary = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > ul > li.salary").text.strip()
-        job_type = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > ul > li.employment-type").text.strip()
-        deadline = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > ul > li.closed-time").text.strip().replace('Closing', '')
-        company_name = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.company-details > div > h2").text.strip()
-        
-        logo_elements = soup.select("#page > div.container > div > div.three-quarters > div > div.module-content > div.company-details > img")
-        logo = [element.get('src') for element in logo_elements]
-        
-        location2 = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.company-details > div > ul > li.address").text.strip()
-        description = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > div.job-details").text.strip()
-        
-        company_url_elements = soup.select("#page > div.container > div > div.three-quarters > div > div.module-content > div.company-details > div > p > strong > a")
-        company_urls = [f'https://www.myjob.mu{element.get("href")}' for element in company_url_elements]
-        
-        company_name1 = ""
-        company_logo = []
-        application = ""
-        company_website = ""
-        company_details = ""
-        company_phone = ""
-        
-        if company_urls:
-            try:
-                company_response = requests.get(company_urls[0], headers=headers)
-                company_response.raise_for_status()
-                company_soup = BeautifulSoup(company_response.text, 'html.parser')
-                
-                company_name1 = company_soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.job-description > h1").text.strip()
-                
-                company_logo_elements = company_soup.select("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.job-description > img")
-                company_logo = [element.get('src') for element in company_logo_elements]
-                
-                application = company_soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.company-details > div:nth-child(1) > ul > li.email-icon").text.strip()
-                
-                company_website = company_soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.company-details > div:nth-child(1) > ul > li.url > a").text.strip()
-                
-                company_details = company_soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.job-description > div").text.strip()
-                
-                company_phone = company_soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.company-details > div:nth-child(1) > ul > li.telnum").text.strip()
-                
-                logger.info(f"Company URL Obtained: {company_urls[0]}")
-                
-            except requests.RequestException as e:
-                logger.error(f"Company URL Failed: {str(e)}")
+        resp = requests.get(company_url[0]).text
+        soup = BeautifulSoup(resp, 'html.parser')
+        company_name1 = soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.job-description > h1").text
+        company_logo_elements = soup.select("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.job-description > img")
+        company_logo = [img.get('src') for img in company_logo_elements]
+        application = soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.company-details > div:nth-child(1) > ul > li.email-icon").text
+        company_website = soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.company-details > div:nth-child(1) > ul > li.url > a").text
+        company_details = soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.job-description > div").text
+        company_phone = soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.company-details > div:nth-child(1) > ul > li.telnum").text
+        print("Company URL Obtained:", company_url)
+    except Exception as e:
+        print("Company URL Failed:", str(e))
 
         # Generate job_id based on job_url
         job_id = hashlib.md5(job_url.encode()).hexdigest()
