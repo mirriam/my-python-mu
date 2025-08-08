@@ -1329,82 +1329,85 @@ def add_three_months_to_date(date_str):
 
 def scrape_jobs():
     result = []
-    processed_ids, processed_urls, _ = load_uganda_processed_job_ids()
-    for i in range(1, 3):  # Scrape the first 2 pages
-        url = f'https://jobwebuganda.com/jobs/page/{i}'
-        logger.info(f"Fetching page: {url}")
+    for i in range(1, 6):
+        url = f'https://www.myjob.mu/ShowResults.aspx?Keywords=&Location=&Category=&Page={i}'
+        print(url)
+        
         try:
-            resp = requests.get(url, headers=HEADERS)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            job_list = soup.select("#titlo > strong > a")
-            urls = [a['href'] for a in job_list if a.get('href')]
-
-            logger.info(f"Collected URLs on page {i}: {urls}")
-
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            job_list = soup.select("#page > div.container > div > div.two-thirds > div > div > div.job-result-logo-title > div > h2 > a")
+            urls = [f'https://www.myjob.mu{link.get("href")}' for link in job_list]
+            
+            print(urls)
+            
             for job_url in urls:
-                if job_url in processed_urls:
-                    logger.info(f"Skipping already processed job URL: {job_url}")
-                    continue
-                data = scrape_job_details(job_url, i)
+                data = scrape_job_details(job_url)
                 if data:
                     result.extend(data)
-                    processed_urls.add(job_url)
+                    
         except requests.RequestException as e:
-            logger.error(f"Error fetching page {url}: {e}")
-            print(f"Error fetching page {url}: {str(e)}")
-    
+            logger.error(f"Error fetching page {url}: {str(e)}")
+            
     return result
 
-def scrape_job_details(job_url, page):
+def scrape_job_details(job_url):
     res = []
     logger.info(f"Scraping job details from: {job_url}")
+    
     try:
-        resp = requests.get(job_url, headers=HEADERS)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, 'html.parser')
-
-        # Scrape individual job details
-        job_title = soup.select_one("div.section.single > div.section_header > h1")
-        job_title_clean = sanitize_text(job_title.text.strip()) if job_title else "Untitled Job"
-        logger.info(f"Job Title: {job_title_clean}")
-
-        company = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(2) > a')
-        company = sanitize_text(company.text.strip()) if company else "Unknown Company"
-        logger.info(f"Company: {company}")
-
-        location = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(3)')
-        location = sanitize_text(location.text.strip()) if location else "Remote"
-        logger.info(f"Location: {location}")
-
-        job_type = soup.select_one('#topss > span')
-        job_type = sanitize_text(job_type.text.strip()) if job_type else "Full-time"
-        logger.info(f"Job Type: {job_type}")
-
-        category1 = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(4) > a:nth-child(2)')
-        category1 = sanitize_text(category1.text.strip()) if category1 else ""
-        logger.info(f"Category 1: {category1}")
-
-        category2 = soup.select_one('#mainContent > div.section.single > div:nth-child(2) > ul > li:nth-child(4) > a:nth-child(3)')
-        category2 = sanitize_text(category2.text.strip()) if category2 else ""
-        logger.info(f"Category 2: {category2}")
-
-        info = soup.select_one("#topss")
-        info = sanitize_text(info.text.strip()) if info else ""
-        logger.info(f"Info: {info}")
-
-        separated_info = [item.strip() for item in info.split(':') if item.strip()]
-        while len(separated_info) < 4:
-            separated_info.append("")
-        logger.info(f"Separated Info: {separated_info}")
-
-        description = soup.select_one("#mainContent > div.section.single > div:nth-child(2) > font")
-        description = sanitize_text(description.text.strip()) if description else ""
-        logger.info(f"Description: {description}")
-
-        applink = soup.select("#mainContent > div.section.single > div:nth-child(2) > font > a")
-        application = ", ".join([sanitize_text(a['href'], is_url=True) for a in applink if a.get('href')]) or ""
-        logger.info(f"Application Link: {application}")
+        response = requests.get(job_url, headers=headers)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        job_title = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > h1").text.strip()
+        location = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > ul > li.location").text.strip()
+        salary = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > ul > li.salary").text.strip()
+        job_type = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > ul > li.employment-type").text.strip()
+        deadline = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > ul > li.closed-time").text.strip().replace('Closing', '')
+        company_name = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.company-details > div > h2").text.strip()
+        
+        logo_elements = soup.select("#page > div.container > div > div.three-quarters > div > div.module-content > div.company-details > img")
+        logo = [element.get('src') for element in logo_elements]
+        
+        location2 = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.company-details > div > ul > li.address").text.strip()
+        description = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > div.job-details").text.strip()
+        
+        company_url_elements = soup.select("#page > div.container > div > div.three-quarters > div > div.module-content > div.company-details > div > p > strong > a")
+        company_urls = [f'https://www.myjob.mu{element.get("href")}' for element in company_url_elements]
+        
+        company_name1 = ""
+        company_logo = []
+        application = ""
+        company_website = ""
+        company_details = ""
+        company_phone = ""
+        
+        if company_urls:
+            try:
+                company_response = requests.get(company_urls[0], headers=headers)
+                company_response.raise_for_status()
+                company_soup = BeautifulSoup(company_response.text, 'html.parser')
+                
+                company_name1 = company_soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.job-description > h1").text.strip()
+                
+                company_logo_elements = company_soup.select("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.job-description > img")
+                company_logo = [element.get('src') for element in company_logo_elements]
+                
+                application = company_soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.company-details > div:nth-child(1) > ul > li.email-icon").text.strip()
+                
+                company_website = company_soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.company-details > div:nth-child(1) > ul > li.url > a").text.strip()
+                
+                company_details = company_soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.job-description > div").text.strip()
+                
+                company_phone = company_soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.company-details > div:nth-child(1) > ul > li.telnum").text.strip()
+                
+                logger.info(f"Company URL Obtained: {company_urls[0]}")
+                
+            except requests.RequestException as e:
+                logger.error(f"Company URL Failed: {str(e)}")
 
         # Generate job_id based on job_url
         job_id = hashlib.md5(job_url.encode()).hexdigest()
@@ -1414,7 +1417,7 @@ def scrape_job_details(job_url, page):
         job_fields = ", ".join(filter(None, [category1, category2]))
 
         # Use page as job_number for simplicity
-        job_number = f"job_{page}_{len(res) + 1}"
+        #job_number = f"job_{page}_{len(res) + 1}"
 
         job_data = {
             'Job ID': job_id,
