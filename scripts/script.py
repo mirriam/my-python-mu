@@ -1327,7 +1327,7 @@ def add_three_months_to_date(date_str):
 
 # ... [All imports and prior code remain unchanged until scrape_jobs] ...
 
-ef scrape_jobs():
+def scrape_jobs():
     result = []
     for i in range(1, 6):
         url = f'https://www.myjob.mu/ShowResults.aspx?Keywords=&Location=&Category=&Page={i}'
