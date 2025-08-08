@@ -85,7 +85,7 @@ JOB_TYPE_MAPPING = {
     "Volunteer": "volunteer"
 }
 
-# Existing utility functions (sanitize_text, clean_description, etc.) remain unchanged
+# Utility functions
 def sanitize_text(text, is_url=False, is_email=False):
     if not isinstance(text, str):
         text = str(text)
@@ -156,7 +156,7 @@ def restore_capitalization(paraphrased, capitalized_words):
         result = re.sub(pattern, orig_word, result, flags=re.IGNORECASE)
     return result
 
-# Existing paraphrasing functions (paraphrase_strict_title, paraphrase_strict_company, etc.) remain unchanged
+# Paraphrasing functions
 def paraphrase_strict_title(title, max_attempts=3, max_sub_attempts=2):
     def has_repetitions(text):
         tokens = text.lower().split()
@@ -174,8 +174,8 @@ def paraphrase_strict_title(title, max_attempts=3, max_sub_attempts=2):
             "Rewrite the following", "Paraphrased title", "Professionally rewrite",
             "Keep it short", "Use different phrasing", "Short (5–12 words)",
             "Paraphrase", "Paraphrased", "Paraphrasing", "Paraphrased version",
-            "Summary", "Summarised", "Summarized", "Summarizing", "Summarising","None.","None","none",
-            ".",":"
+            "Summary", "Summarised", "Summarized", "Summarizing", "Summarising", "None.", "None", "none",
+            ".", ":"
         ]
         for phrase in critical_phrases:
             if phrase.lower() in text_lower:
@@ -1323,69 +1323,97 @@ def add_three_months_to_date(date_str):
         print(f"Invalid date format: {date_str}")
         return None
 
-
-
-# ... [All imports and prior code remain unchanged until scrape_jobs] ...
-
 def scrape_jobs():
     result = []
-    for i in range(1, 6):
-        url = f'https://www.myjob.mu/ShowResults.aspx?Keywords=&Location=&Category=&Page={i}'
+    processed_job_ids, processed_job_urls, processed_companies = load_mauritius_processed_job_ids()
+    start_page = load_last_processed_page()
+    for page in range(start_page, start_page + 5):
+        url = f'https://www.myjob.mu/ShowResults.aspx?Keywords=&Location=&Category=&Page={page}'
         print(url)
-        resp = requests.get(url).text
-        soup = BeautifulSoup(resp, 'html.parser')
-        job_list = soup.select("#page > div.container > div > div.two-thirds > div > div > div.job-result-logo-title > div > h2 > a")
-        urls = ['https://www.myjob.mu' + a.get('href') for a in job_list]
-        print(urls)
-        for job_url in urls:
-            data = scrape_job_details(job_url)
-            if data:
-                result.extend(data)
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=10).text
+            soup = BeautifulSoup(resp, 'html.parser')
+            job_list = soup.select("#page > div.container > div > div.two-thirds > div > div > div.job-result-logo-title > div > h2 > a")
+            urls = ['https://www.myjob.mu' + a.get('href') for a in job_list]
+            print(urls)
+            for job_url in urls:
+                if job_url in processed_job_urls:
+                    logger.info(f"Skipping already processed job URL: {job_url}")
+                    continue
+                data = scrape_job_details(job_url, page)
+                if data:
+                    result.extend(data)
+            save_last_processed_page(page)
+        except RequestException as e:
+            logger.error(f"Error fetching page {page}: {str(e)}")
+            print(f"Error fetching page {page}: {str(e)}")
+            continue
     return result
 
-def scrape_job_details(job_url):
+def scrape_job_details(job_url, page):
     res = []
     print(job_url)
-    resp = requests.get(job_url).text
-    soup = BeautifulSoup(resp, 'html.parser')
-
-    job_title = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > h1").text
-    location = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > ul > li.location").text
-    salary = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > ul > li.salary").text
-    job_type = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > ul > li.employment-type").text
-    deadline = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > ul > li.closed-time").text.replace('Closing', '')
-    company_name = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.company-details > div > h2").text
-    logo_elements = soup.select("#page > div.container > div > div.three-quarters > div > div.module-content > div.company-details > img")
-    logo = [img.get('src') for img in logo_elements]
-    location2 = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.company-details > div > ul > li.address").text
-    description = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > div.job-details").text
-    company_url_elements = soup.select("#page > div.container > div > div.three-quarters > div > div.module-content > div.company-details > div > p > strong > a")
-    company_url = ['https://www.myjob.mu' + a.get('href') for a in company_url_elements]
-    print(company_url)
-
     try:
-        resp = requests.get(company_url[0]).text
+        resp = requests.get(job_url, headers=HEADERS, timeout=10).text
         soup = BeautifulSoup(resp, 'html.parser')
-        company_name1 = soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.job-description > h1").text
-        company_logo_elements = soup.select("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.job-description > img")
-        company_logo = [img.get('src') for img in company_logo_elements]
-        application = soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.company-details > div:nth-child(1) > ul > li.email-icon").text
-        company_website = soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.company-details > div:nth-child(1) > ul > li.url > a").text
-        company_details = soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.job-description > div").text
-        company_phone = soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.company-details > div:nth-child(1) > ul > li.telnum").text
-        print("Company URL Obtained:", company_url)
-    except Exception as e:
-        print("Company URL Failed:", str(e))
 
-        # Generate job_id based on job_url
+        job_title = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > h1")
+        job_title = job_title.text if job_title else ""
+        location = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > ul > li.location")
+        location = location.text if location else "Remote"
+        salary = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > ul > li.salary")
+        salary = salary.text if salary else ""
+        job_type = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > ul > li.employment-type")
+        job_type = job_type.text if job_type else "Full-time"
+        deadline = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > ul > li.closed-time")
+        deadline = deadline.text.replace('Closing', '') if deadline else ""
+        company_name = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.company-details > div > h2")
+        company_name = company_name.text if company_name else "Unknown Company"
+        logo_elements = soup.select("#page > div.container > div > div.three-quarters > div > div.module-content > div.company-details > img")
+        logo = [img.get('src') for img in logo_elements]
+        location2 = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.company-details > div > ul > li.address")
+        location2 = location2.text if location2 else ""
+        description = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > div.job-details")
+        description = description.text if description else ""
+        company_url_elements = soup.select("#page > div.container > div > div.three-quarters > div > div.module-content > div.company-details > div > p > strong > a")
+        company_url = ['https://www.myjob.mu' + a.get('href') for a in company_url_elements]
+        print(company_url)
+
+        company_name1 = ""
+        company_logo = []
+        application = ""
+        company_website = ""
+        company_details = ""
+        company_phone = ""
+
+        if company_url:
+            try:
+                resp = requests.get(company_url[0], headers=HEADERS, timeout=10).text
+                soup = BeautifulSoup(resp, 'html.parser')
+                company_name1 = soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.job-description > h1")
+                company_name1 = company_name1.text if company_name1 else ""
+                company_logo_elements = soup.select("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.job-description > img")
+                company_logo = [img.get('src') for img in company_logo_elements]
+                application = soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.company-details > div:nth-child(1) > ul > li.email-icon")
+                application = application.text if application else ""
+                company_website = soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.company-details > div:nth-child(1) > ul > li.url > a")
+                company_website = company_website.text if company_website else ""
+                company_details = soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.job-description > div")
+                company_details = company_details.text if company_details else ""
+                company_phone = soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.company-details > div:nth-child(1) > ul > li.telnum")
+                company_phone = company_phone.text if company_phone else ""
+                print("Company URL Obtained:", company_url)
+            except Exception as e:
+                print("Company URL Failed:", str(e))
+                logger.error(f"Error fetching company details from {company_url[0]}: {str(e)}")
+
         job_id = hashlib.md5(job_url.encode()).hexdigest()
         logger.info(f"Generated Job ID: {job_id}")
 
-        # Combine categories for job_fields
-        job_fields = ", ".join(filter(None, [category1, category2]))
+        job_title_clean = sanitize_text(job_title)
+        job_number = f"job_{page}_{len(res) + 1}"
 
-        # Use page as job_number for simplicity
-        #job_number = f"job_{page}_{len(res) + 1}"
+        separated_info = ["", "", "", job_type]  # Placeholder for category1, category2, state
 
         job_data = {
             'Job ID': job_id,
@@ -1395,20 +1423,20 @@ def scrape_job_details(job_url):
             'Job Qualifications': "",
             'Job Experiences': "",
             'Location': location,
-            'Job Fields': job_fields,
+            'Job Fields': "",
             'Date Posted': "",
-            'Deadline': "",
+            'Deadline': deadline,
             'Application': application,
-            'Company': company,
-            'Company Logo': "",
+            'Company': company_name,
+            'Company Logo': logo[0] if logo else "",
             'Company Industry': "",
             'Company Founded': "",
             'Company Type': "",
-            'Company Website': "",
-            'Company Address': "",
-            'Company Details': "",
+            'Company Website': company_website,
+            'Company Address': location2,
+            'Company Details': company_details,
             'Job URL': job_url,
-            'New Date String': "",
+            'New Date String': add_three_months_to_date(deadline) if deadline else "",
             'Separated Info Company': separated_info[0],
             'Separated Info Location': separated_info[1],
             'Separated Info State': separated_info[2],
@@ -1418,14 +1446,14 @@ def scrape_job_details(job_url):
         }
 
         company_data = {
-            'company_name': company,
-            'company_logo': "",
+            'company_name': company_name,
+            'company_logo': company_logo[0] if company_logo else "",
             'company_industry': "",
             'company_founded': "",
             'company_type': "",
-            'company_website': "",
-            'company_address': "",
-            'company_details': ""
+            'company_website': company_website,
+            'company_address': location2,
+            'company_details': company_details
         }
 
         extracted_title = extract_job_title(job_title_clean)
@@ -1440,20 +1468,20 @@ def scrape_job_details(job_url):
         )
 
         processed_companies = load_mauritius_processed_job_ids()[2]
-        if company not in processed_companies and company != "Unknown Company":
+        if company_name not in processed_companies and company_name != "Unknown Company":
             company_post_id, company_post_url = save_company_to_wordpress(len(res), company_data)
             if company_post_id:
-                print(f"Successfully posted company {company} to WordPress. Post ID: {company_post_id}, URL: {company_post_url}")
+                print(f"Successfully posted company {company_name} to WordPress. Post ID: {company_post_id}, URL: {company_post_url}")
             else:
-                print(f"Failed to post company {company} to WordPress.")
+                print(f"Failed to post company {company_name} to WordPress.")
 
         post_id, post_url = save_article_to_wordpress(len(res), job_data, rewritten_title, rewritten_description, application)
         if post_id:
             print(f"Successfully posted job {job_number} (Job ID: {job_id}, URL: {job_url}) to WordPress. Post ID: {post_id}, URL: {post_url}")
-            save_processed_job_id(job_id, job_url, company, page, job_number)
+            save_processed_job_id(job_id, job_url, company_name, page, job_number)
         else:
             print(f"Failed to post job {job_number} (Job ID: {job_id}, URL: {job_url}) to WordPress.")
-            save_processed_job_id(job_id, job_url, company, page, job_number)
+            save_processed_job_id(job_id, job_url, company_name, page, job_number)
 
         res.append([job_data, company_data])
         logger.info(f"Appended job data for Job ID {job_id}")
@@ -1463,6 +1491,8 @@ def scrape_job_details(job_url):
         logger.error(f"Error scraping job details from {job_url}: {str(e)}")
         print(f"Error scraping job details from {job_url}: {str(e)}")
         return None
+
+
 
 def main():
     max_cycles = 10
