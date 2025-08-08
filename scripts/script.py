@@ -1109,7 +1109,7 @@ def save_company_to_wordpress(index, company_data):
     auth_string = f"{WP_USERNAME}:{WP_APP_PASSWORD}"
     auth = base64.b64encode(auth_string.encode()).decode()
     headers = {"Authorization": f"Basic {auth}", "Content-Type": "application/json"}
-    company_name = sanitize_text(company_data.get("company_name", "Unknown Company"))
+    company_name = sanitize_text(company_data.get("company_name", ""))
     logo_url = sanitize_text(company_data.get("company_logo", []), is_url=True)
     logo_url = logo_url[0] if isinstance(logo_url, list) and logo_url else ""
     attachment_id = None
@@ -1215,7 +1215,7 @@ def save_article_to_wordpress(index, job_data, rewritten_title, rewritten_descri
     job_type_value = sanitize_text(job_data.get("Job Type", "Full-time"))
     job_type_slug = JOB_TYPE_MAPPING.get(job_type_value, "full-time").lower()
     logo_url = sanitize_text(job_data.get("Company Logo", ""), is_url=True)
-    company_name = sanitize_text(job_data.get("Company", "Unknown Company"))
+    company_name = sanitize_text(job_data.get("Company", ""))
     job_id = str(job_data.get("Job ID", ""))
     job_url = sanitize_text(job_data.get("Job URL", ""), is_url=True)
     is_email = validate_application_method(application, is_email=True)
@@ -1243,8 +1243,8 @@ def save_article_to_wordpress(index, job_data, rewritten_title, rewritten_descri
     attachment_id = upload_logo_to_media_library(logo_url, auth, headers)
     region_term_id = get_region_term_id(location_value, auth, headers)
     job_type_term_id = get_job_type_term_id(job_type_value, auth, headers)
-    if company_name == "Unknown Company":
-        logger.warning(f"Using fallback company name 'Unknown Company' for job {index + 1}")
+    if company_name == "":
+        logger.warning(f"Using fallback company name '' for job {index + 1}")
     post_data = {
         "title": rewritten_title if rewritten_title and not rewritten_title.startswith("Error:") else sanitize_text(job_data.get("Job Title", f"Job Listing {index + 1}")),
         "content": rewritten_description if rewritten_description and not rewritten_description.startswith("Error:") else sanitize_text(job_data.get("Job Description", "")),
@@ -1368,7 +1368,7 @@ def scrape_job_details(job_url, page):
         deadline = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.job-description > ul > li.closed-time")
         deadline = deadline.text.replace('Closing', '') if deadline else ""
         company_name = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.company-details > div > h2")
-        company_name = company_name.text if company_name else "Unknown Company"
+        company_name = company_name.text if company_name else ""
         logo_elements = soup.select("#page > div.container > div > div.three-quarters > div > div.module-content > div.company-details > img")
         logo = [img.get('src') for img in logo_elements]
         location2 = soup.select_one("#page > div.container > div > div.three-quarters > div > div.module-content > div.company-details > div > ul > li.address")
@@ -1379,7 +1379,7 @@ def scrape_job_details(job_url, page):
         company_url = ['https://www.myjob.mu' + a.get('href') for a in company_url_elements]
         print(company_url)
 
-        company_name1 = ""
+        company_name = ""
         company_logo = []
         application = ""
         company_website = ""
@@ -1390,8 +1390,8 @@ def scrape_job_details(job_url, page):
             try:
                 resp = requests.get(company_url[0], headers=HEADERS, timeout=10).text
                 soup = BeautifulSoup(resp, 'html.parser')
-                company_name1 = soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.job-description > h1")
-                company_name1 = company_name1.text if company_name1 else ""
+                company_name = soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.job-description > h1")
+                company_name = company_name.text if company_name else ""
                 company_logo_elements = soup.select("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.job-description > img")
                 company_logo = [img.get('src') for img in company_logo_elements]
                 application = soup.select_one("#page > div.container > div > div.three-quarters > div:nth-child(1) > div > div.company-details > div:nth-child(1) > ul > li.email-icon")
@@ -1468,7 +1468,7 @@ def scrape_job_details(job_url, page):
         )
 
         processed_companies = load_mauritius_processed_job_ids()[2]
-        if company_name not in processed_companies and company_name != "Unknown Company":
+        if company_name not in processed_companies and company_name != "":
             company_post_id, company_post_url = save_company_to_wordpress(len(res), company_data)
             if company_post_id:
                 print(f"Successfully posted company {company_name} to WordPress. Post ID: {company_post_id}, URL: {company_post_url}")
@@ -1514,7 +1514,7 @@ def main():
                 job_data, company_data = job
                 job_id = job_data.get('Job ID', '')
                 job_url = job_data.get('Job URL', '')
-                company_name = job_data.get('Company', 'Unknown Company')
+                company_name = job_data.get('Company', '')
                 logger.info(f"Processing job {index + 1} (Job ID: {job_id}, URL: {job_url})")
 
                 job_title = extract_job_title(job_data.get('Job Title', ''))
@@ -1530,7 +1530,7 @@ def main():
                 )
 
                 processed_companies = load_mauritius_processed_job_ids()[2]
-                if company_name not in processed_companies and company_name != "Unknown Company":
+                if company_name not in processed_companies and company_name != "":
                     company_post_id, company_post_url = save_company_to_wordpress(index, company_data)
                     if company_post_id:
                         logger.info(f"Posted company {company_name} to WordPress. Post ID: {company_post_id}, URL: {company_post_url}")
